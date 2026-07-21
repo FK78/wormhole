@@ -1,0 +1,37 @@
+[config]
+model = "deepseek/deepseek-v4-pro"
+fallback_models = ["deepseek/deepseek-v4-flash"]
+
+[github_action_config]
+handle_push_trigger = true
+push_commands = ['/describe', '/review']
+
+[pr_code_suggestions]
+commitable_code_suggestions = true
+demand_code_suggestions_self_review = true
+extra_instructions = """
+- Only suggest changes that fix actual bugs or prevent real security issues.
+- Do not suggest adding error handling for scenarios that the underlying library/database already handles (e.g., PostgreSQL INSERT RETURNING, Express 5 async error propagation).
+- Do not suggest changes based on older versions of libraries. Check the versions used in the project.
+- Do not suggest wrapping async Express 5 handlers in try/catch. Express 5 catches rejected promises natively.
+- Do not suggest handling null from PostgreSQL INSERT/UPDATE RETURNING queries. These cannot return null on success.
+- Prefer fewer high-quality suggestions over many low-confidence ones.
+"""
+
+[pr_description]
+publish_labels = true
+generate_ai_title = true
+
+[pr_reviewer]
+require_todo_scan = true
+num_max_findings = 3
+extra_instructions = """
+- Only flag issues you are confident about. If you're uncertain whether something is a real bug, say so explicitly rather than presenting it as a definite problem.
+- Verify your assumptions against the project's package.json, schema, and existing code before making claims about runtime behavior.
+- Do not flag theoretical race conditions unless they involve data loss, security vulnerabilities, or financial operations.
+- Do not suggest defensive null checks for operations that cannot return null based on the database engine (PostgreSQL) behavior.
+- Prioritize: security issues > logic bugs > missing edge cases > style. Do not flag style preferences.
+- If suggesting a change, explain what real-world scenario would trigger the bug, not just that it's "possible."
+- This project uses Express 5, PostgreSQL, TypeScript, and JWT-based auth.
+- Do NOT suggest try/catch with next(err) patterns. Express 5 handles async errors natively.
+"""

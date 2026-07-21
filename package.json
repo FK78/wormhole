@@ -1,0 +1,31 @@
+{
+  "name": "wormhole",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/FK78/wormhole#readme",
+  "bugs": {
+    "url": "https://github.com/FK78/wormhole/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FK78/wormhole.git"
+  },
+  "license": "MIT",
+  "author": "FK78",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --env-file .env --watch src/index.ts",
+    "start": "node --env-file .env dist/index.js"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.1.1",
+    "@types/pg": "^8.20.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
+  }
+}

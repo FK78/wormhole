@@ -1,0 +1,67 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0821"/>
+      <stop offset="55%" stop-color="#1a1147"/>
+      <stop offset="100%" stop-color="#2c1866"/>
+    </linearGradient>
+
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f0fdff" stop-opacity="1"/>
+      <stop offset="35%" stop-color="#8be9f0" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#8be9f0" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="512" height="512" rx="104" fill="url(#bgGrad)"/>
+
+  <!-- faint stars -->
+  <g fill="#ffffff">
+    <circle cx="72" cy="88" r="2.4" opacity="0.55"/>
+    <circle cx="118" cy="428" r="1.8" opacity="0.4"/>
+    <circle cx="438" cy="120" r="2" opacity="0.5"/>
+    <circle cx="452" cy="392" r="2.6" opacity="0.45"/>
+    <circle cx="60" cy="330" r="1.6" opacity="0.35"/>
+    <circle cx="410" cy="70" r="1.8" opacity="0.4"/>
+  </g>
+
+  <!-- motion streaks -->
+  <g stroke="#a78bfa" stroke-linecap="round" opacity="0.5">
+    <line x1="256" y1="256" x2="256" y2="42" stroke-width="3" transform="rotate(18 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="42" stroke-width="2.4" transform="rotate(96 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="42" stroke-width="3" transform="rotate(168 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="42" stroke-width="2.2" transform="rotate(242 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="42" stroke-width="2.8" transform="rotate(305 256 256)"/>
+  </g>
+  <g stroke="#67e8f9" stroke-linecap="round" opacity="0.35">
+    <line x1="256" y1="256" x2="256" y2="30" stroke-width="1.6" transform="rotate(52 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="30" stroke-width="1.6" transform="rotate(134 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="30" stroke-width="1.6" transform="rotate(210 256 256)"/>
+    <line x1="256" y1="256" x2="256" y2="30" stroke-width="1.6" transform="rotate(278 256 256)"/>
+  </g>
+
+  <!-- vortex rings, outer to inner -->
+  <g fill="none">
+    <circle cx="256" cy="256" r="198" stroke="#4c1d95" stroke-width="7" opacity="0.5"/>
+    <circle cx="256" cy="256" r="171" stroke="#5b21b6" stroke-width="7" opacity="0.6"/>
+    <circle cx="256" cy="256" r="145" stroke="#7c3aed" stroke-width="6.5" opacity="0.7"/>
+    <circle cx="256" cy="256" r="120" stroke="#9333ea" stroke-width="6" opacity="0.78"/>
+    <circle cx="256" cy="256" r="97" stroke="#a855f7" stroke-width="5.5" opacity="0.85"/>
+    <circle cx="256" cy="256" r="76" stroke="#c084fc" stroke-width="5" opacity="0.9"/>
+    <circle cx="256" cy="256" r="57" stroke="#67e8f9" stroke-width="4.5" opacity="0.95"/>
+    <circle cx="256" cy="256" r="40" stroke="#a5f3fc" stroke-width="4" opacity="1"/>
+  </g>
+
+  <!-- glowing core -->
+  <circle cx="256" cy="256" r="34" fill="url(#coreGlow)" filter="url(#softGlow)"/>
+  <circle cx="256" cy="256" r="8" fill="#ffffff"/>
+</svg>
