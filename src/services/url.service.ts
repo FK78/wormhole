@@ -35,7 +35,7 @@ export const shortenUrl = async (originalUrl: string) => {
         const shortCode = generateRandomCode(6);
         try {
             const result = await insertShortLink(originalUrl, shortCode);
-            return result;
+            return result ? mapRow(result) : null;
         } catch (err: any) {
             if ((err.code == "23505")) continue;
             throw err;

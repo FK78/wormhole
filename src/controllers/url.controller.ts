@@ -4,7 +4,7 @@ import { getOriginalUrl, shortenUrl } from "../services/url.service.ts";
 export const createUrl = async (req: Request, res: Response) => {
   const url = req.body.url as string
   const result = await shortenUrl(url)
-  res.status(200).json(result);
+  res.status(201).json(result);
 };
 
 export const retrieveUrl = async (req: Request, res: Response) => {
