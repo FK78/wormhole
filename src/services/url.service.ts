@@ -1,5 +1,34 @@
+import { AppError } from "../errors/AppError.ts";
 import { getUrl, insertShortLink } from "../queries/url.queries.ts";
 import { generateRandomCode } from "../utils/generateRandomCode.ts";
+
+type urlRow = {
+    id: string,
+    url: string,
+    short_code: string,
+    access_count?: number,
+    created_at: Date,
+    updated_at: Date
+}
+
+type urlRecord = {
+    id: string,
+    url: string,
+    shortCode: string,
+    accessCount?: number,
+    createdAt: Date,
+    updatedAt: Date
+}
+
+const mapRow = (row: urlRow): urlRecord => ({
+    id: row.id,
+    url: row.url,
+    shortCode: row.short_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.access_count !== undefined && { accessCount: row.access_count })
+
+})
 
 export const shortenUrl = async (originalUrl: string) => {
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -18,7 +47,8 @@ export const shortenUrl = async (originalUrl: string) => {
 export const getOriginalUrl = async (shortCode: string) => {
     const result = await getUrl(shortCode)
     if (!result) {
-        throw new Error("Failed to find URL")
+        throw new AppError("Failed to find URL", 404)
     }
-    return result;
+    const row = result
+    return row ? mapRow(row) : null
 }
