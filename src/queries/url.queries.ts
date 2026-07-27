@@ -36,12 +36,12 @@ export const insertShortLink = async (
     `INSERT INTO urls(url, short_code) VALUES ($1, $2) RETURNING id, url, short_code, created_at, updated_at`,
     [originalUrl, shortCode],
   );
-  return result ? mapRow(result.rows[0]) : null;
+  return result.rows[0] ? mapRow(result.rows[0]) : null;
 };
 
 export const getUrl = async (shortCode: string) => {
   const result = await pool.query(`SELECT id, url, short_code, created_at, updated_at FROM urls WHERE short_code = $1`, [shortCode])
-  return result ? mapRow(result.rows[0]) : null
+  return result.rows[0] ? mapRow(result.rows[0]) : null
 
 }
 
@@ -54,6 +54,6 @@ export const shortCodeExists = async (shortCode: string) => {
 };
 
 export const updateOriginalUrl = async (url: string, shortCode: string) => {
-  const result = await pool.query(`UPDATE urls SET url = $1 WHERE short_code = $2`, [url, shortCode])
+  const result = await pool.query(`UPDATE urls SET url = $1 WHERE short_code = $2 RETURNING id, url, short_code, created_at, updated_at`, [url, shortCode])
   return result.rows[0]
 }
