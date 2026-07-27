@@ -22,6 +22,6 @@ export const retrieveUrl = async (req: Request, res: Response) => {
 
 export const removeUrl = async (req: Request, res: Response) => {
   const shortCode = req.params.id as string
-  const result = await deleteUrl(shortCode)
-  res.status(204).json(result)
+  await deleteUrl(shortCode)
+  res.status(204).end()
 }

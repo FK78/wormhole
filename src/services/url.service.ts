@@ -37,5 +37,4 @@ export const deleteUrl = async (shortCode: string) => {
     if (result.rowCount === 0){
         throw new AppError("Failed to find URL", 404)
     }
-    return true
 }
