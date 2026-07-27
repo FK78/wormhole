@@ -10,3 +10,8 @@ export const insertShortLink = async (
   );
   return result.rows[0];
 };
+
+export const getUrl = async (shortCode: string) => {
+  const result = await pool.query(`SELECT * FROM urls WHERE short_code = $1`, [shortCode])
+  return result.rows[0]
+}

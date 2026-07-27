@@ -1,4 +1,4 @@
-import { insertShortLink } from "../queries/url.queries.ts";
+import { getUrl, insertShortLink } from "../queries/url.queries.ts";
 import { generateRandomCode } from "../utils/generateRandomCode.ts";
 
 export const shortenUrl = async (originalUrl: string) => {
@@ -14,3 +14,11 @@ export const shortenUrl = async (originalUrl: string) => {
     }
     throw new Error("Failed to generate unique short code after retries")
 };
+
+export const getOriginalUrl = async (shortCode: string) => {
+    const result = await getUrl(shortCode)
+    if (!result) {
+        throw new Error("Failed to find URL")
+    }
+    return result;
+}
