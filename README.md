@@ -21,9 +21,9 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 ## Tech Stack
 
 - **Node.js** + **Express 5** + **TypeScript**
-- **PostgreSQL** — running in Docker
-- **pg** — raw SQL, no ORM
-- No auth — this one's open season
+- **PostgreSQL** - running in Docker
+- **pg** - raw SQL, no ORM
+- No auth - this one's open season
 
 ## Endpoints
 
@@ -112,7 +112,7 @@ Set up your environment:
 cp .env.example .env
 ```
 
-`.env.example` looks like this — adjust values to match your setup:
+`.env.example` looks like this - adjust values to match your setup:
 
 ```bash
 WORMHOLE_PORT=3000
@@ -144,7 +144,7 @@ Create the tables:
 psql "$DATABASE_URL" -f db/schema.sql
 ```
 
-> **Tip:** you can skip this manual step by mounting `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` — Postgres runs any `.sql` files there automatically on first boot. Just note it only fires on a fresh volume, so if you've already started the container once, run `docker compose down -v` first to reset it.
+> **Tip:** you can skip this manual step by mounting `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` - Postgres runs any `.sql` files there automatically on first boot. Just note it only fires on a fresh volume, so if you've already started the container once, run `docker compose down -v` first to reset it.
 
 Start the server:
 
@@ -194,4 +194,4 @@ Built as a solution to the [URL Shortening Service](https://roadmap.sh/projects/
 
 ## License
 
-MIT — shorten it, fork it, wormhole it.
+MIT - shorten it, fork it, wormhole it.
