@@ -44,14 +44,6 @@ export const getUrl = async (shortCode: string) => {
   return result.rows[0] ? mapRow(result.rows[0]) : null
 }
 
-export const shortCodeExists = async (shortCode: string) => {
-  const result = await pool.query(
-    `SELECT EXISTS(SELECT 1 FROM urls WHERE short_code = $1) AS exists`,
-    [shortCode],
-  );
-  return result.rows[0].exists
-};
-
 export const updateOriginalUrl = async (url: string, shortCode: string) => {
   const result = await pool.query(`UPDATE urls SET url = $1, updated_at = now() WHERE short_code = $2 RETURNING id, url, short_code, created_at, updated_at`, [url, shortCode])
   return result.rows[0] ? mapRow(result.rows[0]) : null
