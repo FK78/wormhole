@@ -7,8 +7,14 @@ const app = express();
 
 app.use(express.json())
 
+const TIMEOUT_MS = 5_000;
 try {
-  await pool.query("SELECT 1");
+  await Promise.race([
+    pool.query("SELECT 1"),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DB health-check timed out")), TIMEOUT_MS)
+    ),
+  ]);
   console.log("DB Connected");
 } catch (err) {
   console.error(err);
