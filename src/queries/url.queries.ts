@@ -40,7 +40,12 @@ export const insertShortLink = async (
 };
 
 export const getUrl = async (shortCode: string) => {
-  const result = await pool.query(`SELECT id, url, short_code, created_at, updated_at FROM urls WHERE short_code = $1`, [shortCode])
+  const result = await pool.query(`UPDATE urls SET access_count = access_count + 1 WHERE short_code = $1 RETURNING id, url, short_code, created_at, updated_at`, [shortCode])
+  return result.rows[0] ? mapRow(result.rows[0]) : null
+}
+
+export const getUrlStats = async (shortCode: string) => {
+  const result = await pool.query(`SELECT * FROM urls WHERE short_code = $1`, [shortCode])
   return result.rows[0] ? mapRow(result.rows[0]) : null
 }
 

@@ -27,13 +27,13 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 
 ## Endpoints
 
-| Method   | Route                  | What it does                       |
-| -------- | ---------------------- | ---------------------------------- |
-| `POST`   | `/shorten`             | Compress a URL into oblivion       |
-| `GET`    | `/shorten/:code`       | Retrieve the original URL          |
-| `PUT`    | `/shorten/:code`       | Point the shortcode somewhere else |
-| `DELETE` | `/shorten/:code`       | Erase it from existence            |
-| `GET`    | `/shorten/:code/stats` | See how popular your link is       |
+| Method   | Route                 | What it does                       |
+| -------- | --------------------- | ---------------------------------- |
+| `POST`   | `/shorten`            | Compress a URL into oblivion       |
+| `GET`    | `/shorten/:id`        | Retrieve the original URL          |
+| `PUT`    | `/shorten/:id`        | Point the shortcode somewhere else |
+| `DELETE` | `/shorten/:id`        | Erase it from existence            |
+| `GET`    | `/shorten/:id/stats`  | See how popular your link is       |
 
 ## Usage
 
@@ -115,14 +115,22 @@ cp .env.example .env
 `.env.example` looks like this — adjust values to match your setup:
 
 ```bash
-PORT=3000
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/wormhole
+WORMHOLE_PORT=3000
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=wormhole
+POSTGRES_PORT=5432
+HOST=localhost
 ```
 
-| Variable       | Description                             |
-| -------------- | --------------------------------------- |
-| `PORT`         | Port the Express server listens on      |
-| `DATABASE_URL` | Postgres connection string used by `pg` |
+| Variable            | Description                        |
+| ------------------- | ---------------------------------- |
+| `WORMHOLE_PORT`     | Port the Express server listens on |
+| `POSTGRES_USER`     | PostgreSQL username                |
+| `POSTGRES_PASSWORD` | PostgreSQL password                |
+| `POSTGRES_DB`       | PostgreSQL database name           |
+| `POSTGRES_PORT`     | PostgreSQL port                    |
+| `HOST`              | Database host                      |
 
 Start the database:
 
@@ -151,15 +159,20 @@ wormhole/
 ├── src/
 │   ├── index.ts
 │   ├── routes/
-│   │   └── shortenRouter.ts
+│   │   └── url.router.ts
 │   ├── controllers/
-│   │   └── shortenController.ts
+│   │   └── url.controller.ts
+│   ├── services/
+│   │   └── url.service.ts
 │   ├── queries/
-│   │   └── shortenQueries.ts
+│   │   └── url.queries.ts
 │   ├── middleware/
+│   │   ├── errorHandler.ts
 │   │   └── validate.ts
+│   ├── errors/
+│   │   └── AppError.ts
 │   ├── utils/
-│   │   └── generateCode.ts
+│   │   └── generateRandomCode.ts
 │   └── db/
 │       └── db.ts
 ├── db/
