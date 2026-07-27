@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { getOriginalUrl, shortenUrl, updateUrl } from "../services/url.service.ts";
+import { deleteUrl, getOriginalUrl, shortenUrl, updateUrl } from "../services/url.service.ts";
 
 export const createUrl = async (req: Request, res: Response) => {
   const url = req.body.url as string
@@ -18,4 +18,10 @@ export const retrieveUrl = async (req: Request, res: Response) => {
   const shortCode = req.params.id as string
   const result = await getOriginalUrl(shortCode)
   res.status(200).json(result)
+}
+
+export const removeUrl = async (req: Request, res: Response) => {
+  const shortCode = req.params.id as string
+  await deleteUrl(shortCode)
+  res.status(204).end()
 }

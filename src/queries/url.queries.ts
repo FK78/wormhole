@@ -48,3 +48,8 @@ export const updateOriginalUrl = async (url: string, shortCode: string) => {
   const result = await pool.query(`UPDATE urls SET url = $1, updated_at = now() WHERE short_code = $2 RETURNING id, url, short_code, created_at, updated_at`, [url, shortCode])
   return result.rows[0] ? mapRow(result.rows[0]) : null
 }
+
+export const deleteUrlRow = async (shortCode: string) => {
+  const result = await pool.query(`DELETE FROM urls WHERE short_code = $1`, [shortCode])
+  return result
+}
