@@ -1,5 +1,5 @@
 import { AppError } from "../errors/AppError.ts";
-import { getUrl, insertShortLink, updateOriginalUrl } from "../queries/url.queries.ts";
+import { deleteUrlRow, getUrl, insertShortLink, updateOriginalUrl } from "../queries/url.queries.ts";
 import { generateRandomCode } from "../utils/generateRandomCode.ts";
 
 export const shortenUrl = async (originalUrl: string) => {
@@ -30,4 +30,12 @@ export const updateUrl = async (url: string, shortCode: string) => {
         throw new AppError("Failed to find URL", 404)
     }
     return result
+}
+
+export const deleteUrl = async (shortCode: string) => {
+    const result = await deleteUrlRow(shortCode)
+    if (result.rowCount === 0){
+        throw new AppError("Failed to find URL", 404)
+    }
+    return true
 }
