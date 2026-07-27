@@ -27,17 +27,43 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 
 ## Endpoints
 
-| Method | Route | What it does |
-|--------|-------|-------------|
-| `POST` | `/shorten` | Compress a URL into oblivion |
-| `GET` | `/shorten/:code` | Retrieve the original URL |
-| `PUT` | `/shorten/:code` | Point the shortcode somewhere else |
-| `DELETE` | `/shorten/:code` | Erase it from existence |
-| `GET` | `/shorten/:code/stats` | See how popular your link is |
+| Method   | Route                  | What it does                       |
+| -------- | ---------------------- | ---------------------------------- |
+| `POST`   | `/shorten`             | Compress a URL into oblivion       |
+| `GET`    | `/shorten/:code`       | Retrieve the original URL          |
+| `PUT`    | `/shorten/:code`       | Point the shortcode somewhere else |
+| `DELETE` | `/shorten/:code`       | Erase it from existence            |
+| `GET`    | `/shorten/:code/stats` | See how popular your link is       |
+
+## Usage
+
+```bash
+# Create a short URL
+curl -X POST http://localhost:3000/shorten \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.example.com/some/long/url"}'
+
+# Retrieve the original URL
+curl http://localhost:3000/shorten/abc123
+
+# Point the shortcode somewhere else
+curl -X PUT http://localhost:3000/shorten/abc123 \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.example.com/some/updated/url"}'
+
+# Erase it from existence
+curl -X DELETE http://localhost:3000/shorten/abc123
+
+# See how popular your link is
+curl http://localhost:3000/shorten/abc123/stats
+```
+
+> Swap `localhost:3000` for whatever `PORT` you set in `.env`.
 
 ## Response Examples
 
 **Create:**
+
 ```json
 {
   "id": "1",
@@ -49,6 +75,7 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 ```
 
 **Stats:**
+
 ```json
 {
   "id": "1",
@@ -62,14 +89,14 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 
 ## Status Codes
 
-| Code | Meaning |
-|------|---------|
-| `200` | Here's your link |
-| `201` | Shortened. You're welcome. |
-| `204` | Deleted. Into the void. |
-| `400` | That's not a valid URL. Try again. |
+| Code  | Meaning                             |
+| ----- | ----------------------------------- |
+| `200` | Here's your link                    |
+| `201` | Shortened. You're welcome.          |
+| `204` | Deleted. Into the void.             |
+| `400` | That's not a valid URL. Try again.  |
 | `404` | Shortcode doesn't exist. Never did. |
-| `500` | Something broke on our end. |
+| `500` | Something broke on our end.         |
 
 ## Getting Started
 
@@ -85,13 +112,31 @@ Set up your environment:
 cp .env.example .env
 ```
 
+`.env.example` looks like this — adjust values to match your setup:
+
+```bash
+PORT=3000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/wormhole
+```
+
+| Variable       | Description                             |
+| -------------- | --------------------------------------- |
+| `PORT`         | Port the Express server listens on      |
+| `DATABASE_URL` | Postgres connection string used by `pg` |
+
 Start the database:
 
 ```bash
 docker compose up -d
 ```
 
-Create the table (connect to Postgres and run `db/schema.sql`).
+Create the tables:
+
+```bash
+psql "$DATABASE_URL" -f db/schema.sql
+```
+
+> **Tip:** you can skip this manual step by mounting `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` — Postgres runs any `.sql` files there automatically on first boot. Just note it only fires on a fresh volume, so if you've already started the container once, run `docker compose down -v` first to reset it.
 
 Start the server:
 
@@ -119,6 +164,7 @@ wormhole/
 │       └── db.ts
 ├── db/
 │   └── schema.sql
+├── .env.example
 ├── compose.yml
 └── tsconfig.json
 ```
