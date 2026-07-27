@@ -26,5 +26,8 @@ export const getOriginalUrl = async (shortCode: string) => {
 
 export const updateUrl = async (url: string, shortCode: string) => {
     const result = await updateOriginalUrl(url, shortCode)
+    if (!result){
+        throw new AppError("Failed to find URL", 404)
+    }
     return result
 }
