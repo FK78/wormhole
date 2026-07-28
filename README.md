@@ -16,10 +16,10 @@
 
 ## Features
 
-- **Shorten URLs** — Generate compact short links from any valid URL
-- **Click tracking** — Monitor access counts per link
-- **Full CRUD** — Create, read, update, and delete short links via REST
-- **Minimal footprint** — Node.js, Express 5, PostgreSQL, no ORM overhead
+- **Shorten URLs** - Generate compact short links from any valid URL
+- **Click tracking** - Monitor access counts per link
+- **Full CRUD** - Create, read, update, and delete short links via REST
+- **Minimal footprint** - Node.js, Express 5, PostgreSQL, no ORM overhead
 
 ## Tech Stack
 
@@ -70,7 +70,7 @@ psql "$DATABASE_URL" -f db/schema.sql
 npm run dev
 ```
 
-> **Tip:** Mount `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` to auto-initialize the schema on first container boot. Note this only runs on a fresh volume — run `docker compose down -v` to reset if needed.
+> **Tip:** Mount `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` to auto-initialize the schema on first container boot. Note this only runs on a fresh volume - run `docker compose down -v` to reset if needed.
 
 ## API Reference
 
