@@ -1,68 +1,94 @@
 <p align="center">
-  <img src="./logo.svg" alt="wormhole logo" width="150" />
+  <img src="./logo.svg" alt="Wormhole" width="150" />
 </p>
 
-<h1 align="center">wormhole</h1>
+<h1 align="center">Wormhole</h1>
 
 <p align="center">
-  <em>A URL shortener for people who think life's too short for long links.</em>
+  A fast, self-hosted URL shortening service with click tracking.
 </p>
 
 <p align="center">
-  RESTful API that shrinks URLs, tracks clicks, and judges nothing.
+  <a href="#features">Features</a> · <a href="#quick-start">Quick Start</a> · <a href="#api-reference">API Reference</a> · <a href="#deployment">Deployment</a>
 </p>
 
 ---
 
-## Why?
+## Features
 
-Because `https://www.example.com/products/categories/electronics/smartphones/2026/summer-sale?utm_source=newsletter&utm_medium=email&utm_campaign=july` deserves better.
+- **Shorten URLs** — Generate compact short links from any valid URL
+- **Click tracking** — Monitor access counts per link
+- **Full CRUD** — Create, read, update, and delete short links via REST
+- **Minimal footprint** — Node.js, Express 5, PostgreSQL, no ORM overhead
 
 ## Tech Stack
 
-- **Node.js** + **Express 5** + **TypeScript**
-- **PostgreSQL** — running in Docker
-- **pg** — raw SQL, no ORM
-- No auth — this one's open season
+| Layer      | Technology                  |
+| ---------- | --------------------------- |
+| Runtime    | Node.js 18+ / TypeScript 7  |
+| Framework  | Express 5                   |
+| Database   | PostgreSQL (via Docker)      |
+| Driver     | pg (raw SQL, no ORM)        |
 
-## Endpoints
+## Quick Start
 
-| Method   | Route                 | What it does                       |
-| -------- | --------------------- | ---------------------------------- |
-| `POST`   | `/shorten`            | Compress a URL into oblivion       |
-| `GET`    | `/shorten/:id`        | Retrieve the original URL          |
-| `PUT`    | `/shorten/:id`        | Point the shortcode somewhere else |
-| `DELETE` | `/shorten/:id`        | Erase it from existence            |
-| `GET`    | `/shorten/:id/stats`  | See how popular your link is       |
+### Prerequisites
 
-## Usage
+- Node.js 18+
+- Docker
+
+### Setup
 
 ```bash
-# Create a short URL
-curl -X POST http://localhost:3000/shorten \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.example.com/some/long/url"}'
-
-# Retrieve the original URL
-curl http://localhost:3000/shorten/abc123
-
-# Point the shortcode somewhere else
-curl -X PUT http://localhost:3000/shorten/abc123 \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.example.com/some/updated/url"}'
-
-# Erase it from existence
-curl -X DELETE http://localhost:3000/shorten/abc123
-
-# See how popular your link is
-curl http://localhost:3000/shorten/abc123/stats
+git clone https://github.com/FK78/wormhole.git
+cd wormhole
+npm install
+cp .env.example .env
 ```
 
-> Swap `localhost:3000` for whatever `PORT` you set in `.env`.
+### Environment Variables
 
-## Response Examples
+| Variable            | Description                        | Default      |
+| ------------------- | ---------------------------------- | ------------ |
+| `WORMHOLE_PORT`     | Port the API server listens on     | `3000`       |
+| `POSTGRES_USER`     | PostgreSQL username                | `postgres`   |
+| `POSTGRES_PASSWORD` | PostgreSQL password                | `postgres`   |
+| `POSTGRES_DB`       | PostgreSQL database name           | `wormhole`   |
+| `POSTGRES_PORT`     | PostgreSQL port                    | `5432`       |
+| `HOST`              | Database host                      | `localhost`  |
 
-**Create:**
+### Run
+
+```bash
+# Start PostgreSQL
+docker compose up -d
+
+# Initialize the database schema
+psql "$DATABASE_URL" -f db/schema.sql
+
+# Start the development server
+npm run dev
+```
+
+> **Tip:** Mount `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` to auto-initialize the schema on first container boot. Note this only runs on a fresh volume — run `docker compose down -v` to reset if needed.
+
+## API Reference
+
+Base URL: `http://localhost:3000`
+
+### Create a short URL
+
+```
+POST /shorten
+```
+
+**Request body:**
+
+```json
+{ "url": "https://www.example.com/some/long/url" }
+```
+
+**Response** `201 Created`:
 
 ```json
 {
@@ -74,7 +100,53 @@ curl http://localhost:3000/shorten/abc123/stats
 }
 ```
 
-**Stats:**
+### Retrieve original URL
+
+```
+GET /shorten/:shortCode
+```
+
+**Response** `200 OK`:
+
+```json
+{
+  "id": "1",
+  "url": "https://www.example.com/some/long/url",
+  "shortCode": "abc123",
+  "createdAt": "2026-07-21T12:00:00Z",
+  "updatedAt": "2026-07-21T12:00:00Z"
+}
+```
+
+### Update a short URL
+
+```
+PUT /shorten/:shortCode
+```
+
+**Request body:**
+
+```json
+{ "url": "https://www.example.com/updated/url" }
+```
+
+**Response** `200 OK`
+
+### Delete a short URL
+
+```
+DELETE /shorten/:shortCode
+```
+
+**Response** `204 No Content`
+
+### Get link statistics
+
+```
+GET /shorten/:shortCode/stats
+```
+
+**Response** `200 OK`:
 
 ```json
 {
@@ -87,106 +159,43 @@ curl http://localhost:3000/shorten/abc123/stats
 }
 ```
 
-## Status Codes
+### Error Codes
 
-| Code  | Meaning                             |
-| ----- | ----------------------------------- |
-| `200` | Here's your link                    |
-| `201` | Shortened. You're welcome.          |
-| `204` | Deleted. Into the void.             |
-| `400` | That's not a valid URL. Try again.  |
-| `404` | Shortcode doesn't exist. Never did. |
-| `500` | Something broke on our end.         |
-
-## Getting Started
-
-```bash
-git clone https://github.com/FK78/wormhole.git
-cd wormhole
-npm install
-```
-
-Set up your environment:
-
-```bash
-cp .env.example .env
-```
-
-`.env.example` looks like this — adjust values to match your setup:
-
-```bash
-WORMHOLE_PORT=3000
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=wormhole
-POSTGRES_PORT=5432
-HOST=localhost
-```
-
-| Variable            | Description                        |
-| ------------------- | ---------------------------------- |
-| `WORMHOLE_PORT`     | Port the Express server listens on |
-| `POSTGRES_USER`     | PostgreSQL username                |
-| `POSTGRES_PASSWORD` | PostgreSQL password                |
-| `POSTGRES_DB`       | PostgreSQL database name           |
-| `POSTGRES_PORT`     | PostgreSQL port                    |
-| `HOST`              | Database host                      |
-
-Start the database:
-
-```bash
-docker compose up -d
-```
-
-Create the tables:
-
-```bash
-psql "$DATABASE_URL" -f db/schema.sql
-```
-
-> **Tip:** you can skip this manual step by mounting `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` — Postgres runs any `.sql` files there automatically on first boot. Just note it only fires on a fresh volume, so if you've already started the container once, run `docker compose down -v` first to reset it.
-
-Start the server:
-
-```bash
-npm run dev
-```
+| Code  | Description                          |
+| ----- | ------------------------------------ |
+| `400` | Invalid URL in request body          |
+| `404` | Short code not found                 |
+| `500` | Internal server error                |
 
 ## Project Structure
 
 ```
 wormhole/
 ├── src/
-│   ├── index.ts
-│   ├── routes/
-│   │   └── url.router.ts
-│   ├── controllers/
-│   │   └── url.controller.ts
-│   ├── services/
-│   │   └── url.service.ts
-│   ├── queries/
-│   │   └── url.queries.ts
-│   ├── middleware/
-│   │   ├── errorHandler.ts
-│   │   └── validate.ts
-│   ├── errors/
-│   │   └── AppError.ts
-│   ├── utils/
-│   │   └── generateRandomCode.ts
-│   └── db/
-│       └── db.ts
+│   ├── index.ts              # App entry point, DB health check
+│   ├── routes/               # Route definitions
+│   ├── controllers/          # Request handling
+│   ├── services/             # Business logic
+│   ├── queries/              # SQL queries
+│   ├── middleware/           # Error handling, validation
+│   ├── errors/               # Custom error classes
+│   ├── utils/                # Helper functions
+│   └── db/                   # Database connection pool
 ├── db/
-│   └── schema.sql
-├── .env.example
-├── compose.yml
+│   └── schema.sql            # Table definitions
+├── compose.yml               # Docker Compose for PostgreSQL
 └── tsconfig.json
 ```
 
-## Requirements
+## Deployment
 
-- Node.js 18+
-- Docker (for PostgreSQL)
-- Long URLs that need shortening (shouldn't be hard to find)
+For production:
+
+```bash
+npm run start
+```
+
+Ensure `WORMHOLE_PORT`, database credentials, and `HOST` are set in the environment.
 
 ## Credit
 
@@ -194,4 +203,4 @@ Built as a solution to the [URL Shortening Service](https://roadmap.sh/projects/
 
 ## License
 
-MIT — shorten it, fork it, wormhole it.
+MIT
