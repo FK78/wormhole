@@ -28,6 +28,8 @@ services:
       - SETUID
     security_opt:
       - no-new-privileges:true
+    secrets:
+      - postgres_password
 
 volumes:
   postgres_data:
