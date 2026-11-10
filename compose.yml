@@ -16,6 +16,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    networks:
+      - backend
 
 volumes:
   postgres_data:
+
+networks:
+  backend:
+    internal: true
