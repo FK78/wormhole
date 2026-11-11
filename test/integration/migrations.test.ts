@@ -95,25 +95,32 @@ const waitFor = async <T>(
 };
 
 const waitForPostgres = async (
-  containerName: string,
+  port: number,
   timeoutMs = 60_000,
 ): Promise<void> => {
+  // Probe through the published TCP port, not `docker exec pg_isready`: the
+  // image runs a temporary socket-only server (listen_addresses='') while it
+  // initializes. pg_isready over the container's Unix socket reports ready
+  // then, but the published port rejects connections with
+  // "Connection terminated unexpectedly" until the real server starts.
   await waitFor(
     async () => {
-      execFileSync(
-        "docker",
-        [
-          "exec",
-          containerName,
-          "pg_isready",
-          "-U",
-          DB_USER,
-          "-d",
-          DB_NAME,
-        ],
-        { stdio: "ignore", timeout: 5_000 },
-      );
-      return true;
+      const client = new Client({
+        host: "127.0.0.1",
+        port,
+        user: DB_USER,
+        password: DB_PASSWORD,
+        database: DB_NAME,
+        connectionTimeoutMillis: 1_000,
+      });
+
+      try {
+        await client.connect();
+        await client.query("SELECT 1");
+        return true;
+      } finally {
+        await client.end().catch(() => {});
+      }
     },
     (ready) => ready,
     timeoutMs,
@@ -292,7 +299,7 @@ describe(
           POSTGRES_IMAGE,
         ]);
 
-        await waitForPostgres(containerName);
+        await waitForPostgres(dbPort);
       },
       { timeout: 120_000 },
     );
