@@ -23,8 +23,8 @@ const TRANSIENT_CODES = new Set([
   "ENETUNREACH",
 ]);
 
-const TRANSIENT_TIMEOUT_MESSAGE =
-  /timeout exceeded when trying to connect|Connection terminated due to connection timeout/i;
+const TRANSIENT_MESSAGE =
+  /timeout exceeded when trying to connect|Connection terminated due to connection timeout|Connection terminated unexpectedly|Client has encountered a connection error and is not queryable/i;
 
 export type RetryOptions = {
   attempts: number;
@@ -41,7 +41,7 @@ export const isTransientDbError = (err: unknown): boolean => {
   const code = (err as NodeJS.ErrnoException).code;
   if (typeof code === "string" && TRANSIENT_CODES.has(code)) return true;
 
-  return TRANSIENT_TIMEOUT_MESSAGE.test(err.message);
+  return TRANSIENT_MESSAGE.test(err.message);
 };
 
 export const computeBackoffDelay = (

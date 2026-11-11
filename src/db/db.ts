@@ -1,5 +1,7 @@
 import { Pool } from "pg";
 import type { DatabaseConfig } from "../config.ts";
+import { getLogger } from "../observability/logger.ts";
+import { registerGaugeCollector } from "../observability/metrics.ts";
 import { isTransientDbError, retryWithBackoff } from "./retry.ts";
 
 const DB_READY_ATTEMPTS = 10;
@@ -7,6 +9,30 @@ const DB_READY_BASE_DELAY_MS = 250;
 const DB_READY_MAX_DELAY_MS = 5_000;
 
 let pool: Pool | undefined;
+
+registerGaugeCollector(
+  "wormhole_db_pool_total_connections",
+  "Connections currently held by the pool, both in use and idle.",
+  () => pool?.totalCount ?? 0,
+);
+
+registerGaugeCollector(
+  "wormhole_db_pool_idle_connections",
+  "Idle connections currently held by the pool.",
+  () => pool?.idleCount ?? 0,
+);
+
+registerGaugeCollector(
+  "wormhole_db_pool_waiting_clients",
+  "Requests waiting for a pool connection.",
+  () => pool?.waitingCount ?? 0,
+);
+
+registerGaugeCollector(
+  "wormhole_db_pool_max_connections",
+  "Maximum number of connections the pool may hold.",
+  () => pool?.options?.max ?? 0,
+);
 
 export const createPool = (config: DatabaseConfig): Pool => {
   const created = new Pool({
@@ -24,7 +50,10 @@ export const createPool = (config: DatabaseConfig): Pool => {
   // and kills Node.
   created.on("error", (err) => {
     const code = (err as NodeJS.ErrnoException).code ?? "unknown";
-    console.error(`[db] idle client error (${code}): ${err.message}`);
+    getLogger().error("database idle client error", {
+      code,
+      error: err,
+    });
   });
 
   pool = created;
@@ -49,8 +78,9 @@ export const waitForDatabase = async (): Promise<void> => {
     shouldRetry: isTransientDbError,
     onRetry: (err, attempt, delayMs) => {
       const code = (err as NodeJS.ErrnoException).code ?? "unknown";
-      console.warn(
+      getLogger().warn(
         `[db] not ready (attempt ${attempt}/${DB_READY_ATTEMPTS}, ${code}); retrying in ${delayMs}ms`,
+        { attempt, maxAttempts: DB_READY_ATTEMPTS, code, delayMs },
       );
     },
   });

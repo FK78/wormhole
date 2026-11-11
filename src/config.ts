@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { LogLevel } from "./observability/logger.ts";
 
 export type Env = Record<string, string | undefined>;
 
@@ -15,6 +16,8 @@ export type DatabaseConfig = {
 export type Config = {
     httpPort: number;
     shutdownTimeoutMs: number;
+    dbHealthCheckIntervalMs: number;
+    logLevel: LogLevel;
     database: DatabaseConfig;
 };
 
@@ -40,6 +43,10 @@ const DEFAULT_HOST = "localhost";
 const DEFAULT_POSTGRES_PORT = 5_432;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const DEFAULT_DB_CONNECT_TIMEOUT_MS = 5_000;
+const DEFAULT_DB_HEALTH_CHECK_INTERVAL_MS = 5_000;
+const DEFAULT_LOG_LEVEL: LogLevel = "info";
+
+const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 
 // setTimeout() treats anything larger as 1ms and emits a warning.
 const MAX_TIMER_MS = 2_147_483_647;
@@ -70,6 +77,23 @@ const requiredString = (
 
 const optionalString = (env: Env, name: string, fallback: string): string =>
     isSet(env[name]) ? env[name].trim() : fallback;
+
+const parseLogLevel = (env: Env, issues: string[]): LogLevel => {
+    const raw = env.LOG_LEVEL;
+
+    if (!isSet(raw)) return DEFAULT_LOG_LEVEL;
+
+    const value = raw.trim().toLowerCase();
+
+    if ((LOG_LEVELS as readonly string[]).includes(value)) {
+        return value as LogLevel;
+    }
+
+    issues.push(
+        `LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")} (received "${raw}")`,
+    );
+    return DEFAULT_LOG_LEVEL;
+};
 
 const parseInteger = (
     env: Env,
@@ -177,6 +201,17 @@ export const loadConfig = (env: Env = process.env): Config => {
         min: 1,
         max: MAX_TIMER_MS,
     });
+    const dbHealthCheckIntervalMs = parseInteger(
+        env,
+        "DB_HEALTH_CHECK_INTERVAL_MS",
+        issues,
+        {
+            fallback: DEFAULT_DB_HEALTH_CHECK_INTERVAL_MS,
+            min: 1,
+            max: MAX_TIMER_MS,
+        },
+    );
+    const logLevel = parseLogLevel(env, issues);
 
     const user = requiredString(env, "POSTGRES_USER", issues);
     const database = requiredString(env, "POSTGRES_DB", issues);
@@ -190,6 +225,8 @@ export const loadConfig = (env: Env = process.env): Config => {
     return {
         httpPort: httpPort!,
         shutdownTimeoutMs: shutdownTimeoutMs!,
+        dbHealthCheckIntervalMs: dbHealthCheckIntervalMs!,
+        logLevel,
         database: {
             host,
             port: postgresPort!,

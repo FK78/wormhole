@@ -1,0 +1,114 @@
+groups:
+  - name: wormhole
+    rules:
+      - alert: WormholeTargetDown
+        expr: up{job="wormhole"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: wormhole
+        annotations:
+          summary: "Wormhole API is down or cannot be scraped"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 30 seconds. The process may be stopped, unreachable, or failing to serve /metrics. Request-based alerts cannot fire while this is true."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#target-down"
+
+      - alert: WormholeDatabaseUnavailable
+        expr: wormhole_database_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: wormhole
+        annotations:
+          summary: "Wormhole cannot reach PostgreSQL"
+          description: "{{ $labels.instance }} has reported wormhole_database_up == 0 for 30 seconds. Requests that need the database are returning 503."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#database-unavailable"
+
+      - alert: WormholeHighErrorRate
+        expr: |
+          (
+            sum(rate(wormhole_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(wormhole_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: wormhole
+        annotations:
+          summary: "Wormhole 5xx error rate is above 5%"
+          description: "More than 5% of HTTP requests have returned 5xx for 5 minutes. Check database availability and the error logs for the affected request IDs."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#high-error-rate"
+
+      - alert: WormholeElevatedErrorRate
+        expr: |
+          (
+            sum(rate(wormhole_http_requests_total{status=~"5.."}[30m]))
+            /
+            sum(rate(wormhole_http_requests_total[30m]))
+          ) > 0.005
+        for: 30m
+        labels:
+          severity: warning
+          service: wormhole
+        annotations:
+          summary: "Wormhole error rate is five times its SLO budget"
+          description: "More than 0.5% of HTTP requests have returned 5xx over the last 30 minutes, which is five times the 0.1% error-ratio budget behind the 99.9% availability SLO."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#high-error-rate"
+
+      - alert: WormholeHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(wormhole_http_request_duration_seconds_bucket[5m]))
+          ) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+          service: wormhole
+        annotations:
+          summary: "Wormhole p95 latency is above 300ms"
+          description: "The 95th percentile request latency has exceeded the 300ms SLO for 10 minutes."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#latency"
+
+      - alert: WormholeHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(wormhole_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: critical
+          service: wormhole
+        annotations:
+          summary: "Wormhole p99 latency is above 1s"
+          description: "The 99th percentile request latency has exceeded the 1s SLO for 10 minutes."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#latency"
+
+      - alert: WormholeDatabasePoolSaturated
+        expr: |
+          (
+            wormhole_db_pool_total_connections
+            - wormhole_db_pool_idle_connections
+          )
+          /
+          clamp_min(wormhole_db_pool_max_connections, 1) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          service: wormhole
+        annotations:
+          summary: "Wormhole database pool is nearly exhausted"
+          description: "More than 90% of database pool connections have been in use for 10 minutes."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#pool-saturation"
+
+      - alert: WormholeDatabasePoolWaiters
+        expr: max_over_time(wormhole_db_pool_waiting_clients[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: wormhole
+        annotations:
+          summary: "Requests are waiting for a database connection"
+          description: "At least one request has waited for a pool connection for 5 minutes, indicating pool saturation or a slow database."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#pool-saturation"

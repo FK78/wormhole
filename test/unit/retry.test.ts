@@ -53,6 +53,18 @@ test("isTransientDbError recognizes connection and recovery errors", () => {
     ),
     true,
   );
+  assert.equal(
+    isTransientDbError(new Error("Connection terminated unexpectedly")),
+    true,
+  );
+  assert.equal(
+    isTransientDbError(
+      new Error(
+        "Client has encountered a connection error and is not queryable",
+      ),
+    ),
+    true,
+  );
 });
 
 test("isTransientDbError rejects configuration and unknown errors", () => {

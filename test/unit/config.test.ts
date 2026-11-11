@@ -49,6 +49,8 @@ test("loads a valid configuration with documented defaults", () => {
 
   assert.equal(config.httpPort, 3_000);
   assert.equal(config.shutdownTimeoutMs, 10_000);
+  assert.equal(config.dbHealthCheckIntervalMs, 5_000);
+  assert.equal(config.logLevel, "info");
   assert.deepEqual(config.database, {
     host: "localhost",
     port: 5_432,
@@ -67,12 +69,16 @@ test("uses explicit values", () => {
     WORMHOLE_PORT: "8080",
     SHUTDOWN_TIMEOUT_MS: "2500",
     DB_CONNECT_TIMEOUT_MS: "1500",
+    DB_HEALTH_CHECK_INTERVAL_MS: "15000",
+    LOG_LEVEL: "DEBUG",
     HOST: "db.internal",
     POSTGRES_PORT: "6543",
   });
 
   assert.equal(config.httpPort, 8_080);
   assert.equal(config.shutdownTimeoutMs, 2_500);
+  assert.equal(config.dbHealthCheckIntervalMs, 15_000);
+  assert.equal(config.logLevel, "debug");
   assert.deepEqual(config.database, {
     host: "db.internal",
     port: 6_543,
@@ -91,12 +97,16 @@ test("empty optional values fall back to defaults instead of zero", () => {
     WORMHOLE_PORT: "",
     SHUTDOWN_TIMEOUT_MS: "",
     DB_CONNECT_TIMEOUT_MS: "",
+    DB_HEALTH_CHECK_INTERVAL_MS: "",
+    LOG_LEVEL: "  ",
     HOST: "   ",
     POSTGRES_PORT: "",
   });
 
   assert.equal(config.httpPort, 3_000);
   assert.equal(config.shutdownTimeoutMs, 10_000);
+  assert.equal(config.dbHealthCheckIntervalMs, 5_000);
+  assert.equal(config.logLevel, "info");
   assert.equal(config.database.connectTimeoutMs, 5_000);
   assert.equal(config.database.host, "localhost");
   // Number("") === 0 used to make this port 0.
@@ -159,7 +169,25 @@ test("rejects malformed timeouts", () => {
       /DB_CONNECT_TIMEOUT_MS must be an integer between 1 and 2147483647/,
       `DB_CONNECT_TIMEOUT_MS=${value}`,
     );
+
+    assert.match(
+      loadAndExpectError({
+        ...baseEnv(file),
+        DB_HEALTH_CHECK_INTERVAL_MS: value,
+      }).message,
+      /DB_HEALTH_CHECK_INTERVAL_MS must be an integer between 1 and 2147483647/,
+      `DB_HEALTH_CHECK_INTERVAL_MS=${value}`,
+    );
   }
+});
+
+test("rejects an invalid LOG_LEVEL", () => {
+  const file = passwordFile("s3cret");
+
+  const error = loadAndExpectError({ ...baseEnv(file), LOG_LEVEL: "verbose" });
+
+  assert.match(error.message, /LOG_LEVEL must be one of debug, info, warn, error/);
+  assert.match(error.message, /received "verbose"/);
 });
 
 test("reports an unreadable password file with its resolved path", () => {
@@ -244,6 +272,8 @@ test("the entrypoint exits with a clear error before connecting", () => {
     "WORMHOLE_PORT",
     "SHUTDOWN_TIMEOUT_MS",
     "DB_CONNECT_TIMEOUT_MS",
+    "DB_HEALTH_CHECK_INTERVAL_MS",
+    "LOG_LEVEL",
   ]) {
     delete env[name];
   }
