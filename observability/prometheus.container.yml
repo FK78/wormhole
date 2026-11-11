@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: wormhole
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: wormhole
+    metrics_path: /metrics
+    static_configs:
+      # Prometheus joins the app's edge network and scrapes the Compose service
+      # name directly. Use prometheus.yml instead when the API runs on the host.
+      - targets:
+          - "app:3000"
+        labels:
+          component: api

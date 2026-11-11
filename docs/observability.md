@@ -137,8 +137,10 @@ database alert's `== 0` comparison matches nothing.
 1. Check the API process and its logs (`docker compose logs app` for the
    containerized stack, or the `npm run dev` terminal).
 2. Check `/metrics` directly: `curl -s localhost:3000/metrics | head`.
-3. If the process is running but `up` is `0`, the scrape itself is failing —
-   check the port, the `/metrics` response, and Prometheus's target errors page.
+3. If the process is running but `up` is `0`, confirm the Prometheus mode: host
+   mode expects `host.docker.internal:3000`; container mode expects `app:3000`
+   and the Prometheus container on the `wormhole_edge` network. Then check the
+   target errors page and the `/metrics` response.
 
 ### Database unavailable
 
@@ -175,22 +177,21 @@ clearest symptom: with a healthy database,
 
 ## Dashboards and local stack
 
-Start the containerized API and database, then the observability stack:
-
-```bash
-# Terminal 1: database and API
-docker compose up -d --build
-
-# Terminal 2: Prometheus, Alertmanager, Grafana
-docker compose -f compose.observability.yml up -d
-```
-
-To run the API in watch mode on the host instead, start only the database with the
-development overlay and run `npm run dev`:
+For the host-run API (`npm run dev`), start only the database and use the base
+observability stack; Prometheus scrapes `host.docker.internal:3000`:
 
 ```bash
 docker compose -f compose.yml -f compose.dev.yml up -d db
 npm run dev
+docker compose -f compose.observability.yml up -d
+```
+
+For the containerized API, start the app stack first, then add the container
+overlay; Prometheus joins `wormhole_edge` and scrapes `app:3000`:
+
+```bash
+docker compose up -d --build
+docker compose -f compose.observability.yml -f compose.observability.container.yml up -d
 ```
 
 | Service | URL | Notes |
@@ -201,11 +202,12 @@ npm run dev
 
 The dashboard `Wormhole RED and Database` is provisioned automatically from
 [`observability/grafana/dashboards/wormhole.json`](../observability/grafana/dashboards/wormhole.json).
-Prometheus scrapes `host.docker.internal:3000`; the Compose `app` service publishes
-the API there, and `npm run dev` listens on the same port. Edit
+Prometheus uses `host.docker.internal:3000` in host mode and `app:3000` in
+container mode. Edit
 [`observability/prometheus.yml`](../observability/prometheus.yml) if
-`WORMHOLE_PORT` is different. The compose file binds all three UIs to
-`127.0.0.1` and adds the `host-gateway` mapping needed on Linux.
+`WORMHOLE_PORT` differs for the host-run API; the container overlay always uses
+the internal port 3000. The compose file binds all three UIs to `127.0.0.1` and
+adds the `host-gateway` mapping needed on Linux.
 
 Prometheus retains seven days of data by default. The Alertmanager receiver is
 intentionally empty in this baseline: alerts are visible in its UI. Wire a

@@ -157,10 +157,9 @@ chmod 600 secrets/postgres_password.txt
 docker compose up -d --build
 ```
 
-The image runs as UID 1000 (`node`). Compose file secrets are bind mounts, so the
-password file must be readable by that UID. On a Linux host where your user is not
-UID 1000, either `chown 1000:1000 secrets/postgres_password.txt` and keep mode
-`600`, or use `chmod 644` for a local-only password.
+The one-shot `secret-init` service reads the password file as root and copies it
+into a volume owned by UID 1000, the app's runtime user. The host file can stay
+mode `600`, and the app never reads it directly.
 
 Verify that the containers and database are healthy:
 
@@ -221,8 +220,9 @@ precedence over values in the file.
 `POSTGRES_PASSWORD_FILE` is resolved relative to the process working directory when
 the app reads it. Compose resolves its `secrets.postgres_password.file` path
 relative to the Compose file, which is the repository root in the commands here.
-Keep the app and Compose pointed at the same file so there is only one password to
-manage.
+The one-shot `secret-init` service copies that Docker secret into a volume and the
+app reads `/run/secrets/postgres_password`, so the host file remains the single
+source of truth.
 
 ### Validation behavior
 
@@ -322,7 +322,9 @@ image's `CMD`.
 network, a Docker secret, a health check, container-hardening defaults, and a
 persistent volume. The API joins `backend` for database traffic and a separate
 `edge` bridge for its loopback-published port; Docker does not publish ports from
-an internal-only network.
+an internal-only network. A one-shot `secret-init` service copies the Docker
+secret into a UID 1000-owned volume before the app starts, so the host file's
+owner and mode do not have to match the container user.
 
 Run the full stack with the base file:
 
@@ -663,8 +665,19 @@ it.
 
 ### Local Prometheus, Alertmanager, and Grafana
 
+For the host-run API (`npm run dev`), the base observability stack scrapes
+`host.docker.internal:3000`:
+
 ```bash
 docker compose -f compose.observability.yml up -d
+```
+
+For the containerized API, start the app stack first, then add the container
+overlay. Prometheus joins `wormhole_edge` and scrapes `app:3000` directly:
+
+```bash
+docker compose up -d --build
+docker compose -f compose.observability.yml -f compose.observability.container.yml up -d
 ```
 
 | Service | URL |
@@ -673,12 +686,11 @@ docker compose -f compose.observability.yml up -d
 | Alertmanager | http://localhost:9093 |
 | Grafana | http://localhost:3001 (`admin`/`admin` by default) |
 
-Prometheus scrapes `host.docker.internal:3000`. The Compose `app` service
-publishes the API on `127.0.0.1:${WORMHOLE_PORT:-3000}`, so the target works
-whether the API runs in the container or on the host. Edit
-[`observability/prometheus.yml`](observability/prometheus.yml) if `WORMHOLE_PORT`
-differs. The Grafana dashboard is provisioned automatically. To verify the
-database-loss alert, run the API and database, then:
+The overlay requires the `wormhole_edge` network, which the app stack creates.
+Edit [`observability/prometheus.yml`](observability/prometheus.yml) if
+`WORMHOLE_PORT` differs for the host-run API; the container overlay always uses
+the internal port 3000. The Grafana dashboard is provisioned automatically. To
+verify the database-loss alert, run the API and database, then:
 
 ```bash
 docker compose stop db
@@ -774,7 +786,8 @@ wormhole/
 ├── observability/
 │   ├── alerts.yml               # Prometheus alert rules
 │   ├── alertmanager.yml
-│   ├── prometheus.yml
+│   ├── prometheus.yml           # host-run API scrape config
+│   ├── prometheus.container.yml # container-mode scrape config
 │   └── grafana/                 # provisioned datasource and dashboard
 ├── test/
 │   ├── integration/
@@ -795,9 +808,10 @@ wormhole/
 ├── .npmrc
 ├── .nvmrc
 ├── Dockerfile                   # multi-stage production image
-├── compose.yml                  # PostgreSQL and API services
+├── compose.yml                  # PostgreSQL, API, and secret init
 ├── compose.dev.yml              # host port overlay for local development
 ├── compose.observability.yml    # Prometheus, Alertmanager, Grafana
+├── compose.observability.container.yml # container-mode scrape overlay
 ├── package.json
 ├── package-lock.json
 ├── tsconfig.json
@@ -845,9 +859,10 @@ Another process owns `WORMHOLE_PORT`. Stop it or set a different port in `.env`.
 
 ### `POSTGRES_PASSWORD_FILE: cannot read`
 
-The app container runs as UID 1000, and Compose file secrets preserve the host
-file's owner and mode. Run `chown 1000:1000 secrets/postgres_password.txt` and keep
-mode `600`, or use `chmod 644` for a local-only password.
+The app reads the copy created by the one-shot `secret-init` service, not the
+host file directly. Check `docker compose logs secret-init`; the host file must
+exist and be readable by that container (it runs as root). Then check the app
+logs for the resolved path.
 
 ### Integration tests are skipped
 
@@ -865,11 +880,10 @@ Docker is not available to the test process. Start Docker and verify with
   especially for `POST /shorten`.
 - **Destination URLs are stored without syntax validation or scheme restrictions.**
   Add validation if untrusted clients can submit links.
-- **Secrets stay out of source control.** `secrets/` and `.env` are gitignored. The
-  app image runs as UID 1000 and Compose file secrets are bind mounts, so the
-  password file must be readable by that UID. On a shared host, `chown 1000:1000`
-  the file and keep mode `600`; for local development `chmod 644` is acceptable.
-  Do not bake it into an image.
+- **Secrets stay out of source control.** `secrets/` and `.env` are gitignored. A
+  one-shot `secret-init` service reads the password file as root, copies it into a
+  volume owned by UID 1000, and the app reads only that copy. Keep the host file
+  mode `600`; do not bake it into an image.
 - **The Compose services are hardened** with `cap_drop: ALL`, `no-new-privileges`,
   a read-only root filesystem for the API, and an internal network for database
   traffic. The API joins a second `edge` bridge only because Docker cannot publish
@@ -890,8 +904,8 @@ Docker is not available to the test process. Start Docker and verify with
 - [ ] Review the uploaded SBOM and Grype SARIF results; do not ship fixable
       HIGH/CRITICAL findings.
 - [ ] Provide configuration through the process environment; avoid shipping `.env`.
-- [ ] Provide `POSTGRES_PASSWORD_FILE` as a mounted secret, readable only by the
-      runtime user (UID 1000).
+- [ ] Provide `POSTGRES_PASSWORD_FILE` as a mounted secret; the Compose
+      `secret-init` service copies it to a UID 1000-owned volume for the app.
 - [ ] Point `HOST` and `POSTGRES_PORT` at a private database endpoint.
 - [ ] Configure `/healthz` as the liveness probe and `/readyz` as the readiness
       probe.
