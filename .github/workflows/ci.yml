@@ -44,6 +44,9 @@ jobs:
             test ! -e /app/.env
             test ! -e /app/secrets
             test ! -e /usr/local/lib/node_modules/npm
+            test -f /app/dist/db/migrate.js
+            test -d /app/db/migrations
+            test -f /app/db/migrations/0001_create_urls.sql
           '
 
       - name: Generate SBOM
@@ -77,3 +80,38 @@ jobs:
         with:
           sarif_file: grype-results.sarif
           category: grype
+
+  migrations:
+    name: Validate migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify compiled migration CLI
+        run: node dist/db/migrate.js --help | grep -q "Usage"
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Verify Docker
+        # Fail loudly instead of silently skipping the integration suite.
+        run: docker info
+
+      - name: Migration tests
+        run: npm run test:migrations

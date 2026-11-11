@@ -1,3 +1,4 @@
+-- Up Migration
 CREATE TABLE urls (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     url TEXT NOT NULL,
@@ -6,3 +7,6 @@ CREATE TABLE urls (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ
 );
+
+-- Down Migration
+DROP TABLE urls;

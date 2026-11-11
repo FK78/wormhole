@@ -6,7 +6,6 @@ node_modules
 dist
 secrets
 test
-db
 docs
 observability
 coverage

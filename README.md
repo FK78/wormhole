@@ -65,6 +65,9 @@ error when it cannot start correctly.
 - **Short-link lifecycle** — create, resolve, update, delete, and inspect links.
 - **Collision-safe codes** — 6-character codes from a 62-character alphabet, backed
   by a unique database constraint and bounded retries.
+- **Versioned database migrations** — SQL migrations with forward and rollback
+  scripts, a `schema_migrations` history table, and automatic baselining of
+  pre-migration volumes without data loss.
 - **Atomic click counting** — resolving a link increments `access_count` in a
   single SQL statement, so concurrent requests do not lose updates.
 - **Boot-time configuration validation** — every variable is parsed and checked
@@ -121,6 +124,7 @@ listening.
 | Language | TypeScript 7, strict mode, ESM |
 | Database | PostgreSQL 18.6 (pinned image digest in Compose) |
 | Database driver | `pg` 8 with `pg.Pool`, raw parameterized SQL |
+| Migrations | node-pg-migrate 9 with SQL migration files |
 | Observability | JSON logs, Prometheus `/metrics`, alert rules, Grafana dashboard |
 | Tests | Node.js built-in test runner (`node:test`) |
 | Containerization | Docker Compose for PostgreSQL and the local observability stack |
@@ -177,10 +181,18 @@ curl -s -X POST http://localhost:3000/shorten \
   -d '{"url":"https://www.example.com/products/electronics/smartphones?utm_source=newsletter"}'
 ```
 
-The schema in `db/schema.sql` is applied automatically the first time the
-PostgreSQL data volume is initialized. If the volume already exists, the schema is
-not re-applied; reset it with `docker compose down -v` (this destroys data) or
-apply migrations manually.
+The one-shot `migrate` service applies pending migrations before the API starts;
+`app` waits for it to exit successfully. This works on a fresh volume and on an
+existing volume created by an older release: when `public.urls` already exists
+without migration history, the migration step verifies the legacy shape and
+records migration `0001` without re-running it, preserving all rows.
+
+```bash
+docker compose logs migrate
+```
+
+If the existing schema does not match the expected baseline, the migration fails
+with the differences and the app does not start. See [Database](#database).
 
 ### Local development with watch mode
 
@@ -194,6 +206,7 @@ npm ci
 docker compose -f compose.yml -f compose.dev.yml up -d db
 docker compose -f compose.yml -f compose.dev.yml port db 5432
 # 127.0.0.1:5432
+npm run db:migrate
 npm run dev
 ```
 
@@ -203,15 +216,17 @@ attaching the database to a project-scoped, non-internal `dev` network; the
 non-internal network. `HOST=127.0.0.1` in `.env` matches the IPv4 loopback
 binding, which matters on systems where `localhost` resolves to `::1` first.
 
-Do not run it while the `app` container is publishing host port 3000; stop one or
-set a different `WORMHOLE_PORT`. Verify the API with
+The development overlay starts only the database, so run `npm run db:migrate`
+before `npm run dev`. Do not run it while the `app` container is publishing host
+port 3000; stop one or set a different `WORMHOLE_PORT`. Verify the API with
 `curl -s http://localhost:3000/readyz`.
 
 ## Configuration
 
 Configuration is read from the process environment. The npm scripts load `.env`
-with Node's `--env-file`, and variables already present in the environment take
-precedence over values in the file.
+with Node's `--env-file` (the migration scripts use `--env-file-if-exists`, so they
+also work with environment variables injected by a platform), and variables
+already present in the environment take precedence over values in the file.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -220,6 +235,7 @@ precedence over values in the file.
 | `DB_CONNECT_TIMEOUT_MS` | No | `5000` | Connection timeout for each `pg.Pool` connection attempt (1–2147483647). |
 | `DB_HEALTH_CHECK_INTERVAL_MS` | No | `5000` | How often the database availability probe runs (1–2147483647). |
 | `LOG_LEVEL` | No | `info` | Minimum log level: `debug`, `info`, `warn`, or `error`. |
+| `RUN_MIGRATIONS_ON_STARTUP` | No | `false` | If `true`, apply pending migrations after the database readiness check and before the HTTP server listens. Use `true` only on platforms without a separate migration step. |
 | `POSTGRES_USER` | Yes | — | PostgreSQL username. |
 | `POSTGRES_PASSWORD_FILE` | Yes | — | Path to a file containing the PostgreSQL password. |
 | `POSTGRES_DB` | Yes | — | PostgreSQL database name. |
@@ -255,13 +271,19 @@ Rules:
   is treated as unset, not as `0`.
 - Ports must be integers in `1–65535`. Timeouts must be positive integers no larger
   than `2147483647` (the `setTimeout` maximum). `LOG_LEVEL` must be one of the
-  levels listed above.
+  levels listed above. `RUN_MIGRATIONS_ON_STARTUP` must be `true` or `false`
+  (case-insensitive); an unset or empty value defaults to `false`.
 - `POSTGRES_PASSWORD_FILE` must point to a readable, non-empty file. Trailing
   newlines are stripped the same way PostgreSQL's entrypoint strips them; other
   whitespace is preserved so the app and the container use identical bytes.
-- `POSTGRES_PASSWORD` and `DATABASE_URL` are intentionally unsupported and cause
-  startup to fail with a message directing you to the discrete variables and the
-  password file.
+- `POSTGRES_PASSWORD` and `DATABASE_URL` are intentionally unsupported by the API
+  and cause startup to fail with a message directing you to the discrete variables
+  and the password file.
+- The migration CLI deliberately **ignores** `DATABASE_URL` and logs a warning if
+  it is set. It reads `HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_DB`, and
+  `POSTGRES_PASSWORD_FILE`, so you do not need to unset `DATABASE_URL` to run
+  migrations. This applies only to migration commands; the API still rejects the
+  variable.
 
 ### Changing the database password
 
@@ -285,12 +307,14 @@ Run the API on the host with watch mode, with PostgreSQL from Compose:
 
 ```bash
 docker compose -f compose.yml -f compose.dev.yml up -d db
+npm run db:migrate
 npm run dev
 ```
 
 The overlay publishes the database on `127.0.0.1:${POSTGRES_PORT:-5432}` through
 a non-internal `dev` network while `backend` stays internal; the base stack
-publishes no database port. `npm run dev` runs `src/index.ts` directly with
+publishes no database port. `npm run db:migrate` applies pending migrations
+before the host process starts. `npm run dev` runs `src/index.ts` directly with
 Node's type stripping and `--watch`, loading `.env` and restarting on file
 changes. See the [Quick start](#quick-start) if `.env` or
 `secrets/postgres_password.txt` is missing.
@@ -298,25 +322,33 @@ changes. See the [Quick start](#quick-start) if `.env` or
 ### Container image
 
 `Dockerfile` is a multi-stage build: `npm ci` and `tsc` run in build stages, and
-the runtime stage contains only production dependencies, `dist/`, and
-`package.json`. The image runs as the unprivileged `node` user (UID 1000), exposes
-port 3000, and starts with `node dist/index.js`.
+the runtime stage contains only production dependencies, `dist/`, `db/migrations/`,
+and `package.json`. The image runs as the unprivileged `node` user (UID 1000),
+exposes port 3000, and starts with `node dist/index.js`.
+
+The same image also runs the migration CLI:
+
+```bash
+node dist/db/migrate.js up
+```
 
 ```bash
 docker build --tag wormhole:local .
 ```
 
-`compose.yml` builds the same image for the `app` service. `docker compose up`
-starts PostgreSQL and the API; `compose.dev.yml` is only needed when the API runs
-on the host. The Node 26.13.0 base image is pinned by digest, so update `.nvmrc`,
-`engines.node`, and the digest together.
+`compose.yml` builds one image for both the one-shot `migrate` service and the
+`app` service. `docker compose up` starts PostgreSQL, applies migrations, and then
+starts the API; `compose.dev.yml` is only needed when the API runs on the host. The
+Node 26.13.0 base image is pinned by digest, so update `.nvmrc`, `engines.node`,
+and the digest together.
 
 ### Production build
 
 ```bash
 npm ci
-npm run build          # tsc -> dist/
-node dist/index.js     # configuration comes from the process environment
+npm run build              # tsc -> dist/
+node dist/db/migrate.js up # apply pending migrations first
+node dist/index.js         # configuration comes from the process environment
 ```
 
 `npm start` is a convenience for environments that have a `.env` file:
@@ -328,7 +360,10 @@ npm start              # node --env-file .env dist/index.js
 Run `npm run build` before omitting dev dependencies; TypeScript is a dev
 dependency. For orchestrators, inject environment variables and secrets directly
 and run `node dist/index.js` rather than relying on `.env`; this is also the
-image's `CMD`.
+image's `CMD`. Prefer running the migration step separately; setting
+`RUN_MIGRATIONS_ON_STARTUP=true` makes the API apply pending migrations before it
+listens, which is convenient on platforms without a deploy job but delays
+readiness and should be paired with a generous liveness start period.
 
 ### Local PostgreSQL
 
@@ -357,6 +392,7 @@ database's isolation. Use the overlay when the API runs on the host:
 docker compose -f compose.yml -f compose.dev.yml up -d db
 docker compose -f compose.yml -f compose.dev.yml port db 5432
 # 127.0.0.1:5432
+npm run db:migrate
 npm run dev
 ```
 
@@ -570,7 +606,10 @@ return `404` with `{"error":"Failed to find URL"}`.
 
 ## Database
 
-The schema is defined in [`db/schema.sql`](./db/schema.sql):
+Schema changes are versioned SQL migrations in
+[`db/migrations`](./db/migrations). The first migration,
+[`0001_create_urls.sql`](./db/migrations/0001_create_urls.sql), is the original
+schema:
 
 ```sql
 CREATE TABLE urls (
@@ -588,10 +627,86 @@ CREATE TABLE urls (
 - `created_at` defaults to `NOW()`. `updated_at` is `NULL` until the first update.
 - Resolving a link executes `UPDATE ... SET access_count = access_count + 1 ...
   RETURNING`, so the read and increment are atomic.
-- There is no migration framework. `db/schema.sql` is mounted into
-  `/docker-entrypoint-initdb.d/` and runs only when PostgreSQL initializes a fresh
-  volume. Treat schema changes as explicit migrations in environments where data
-  must be preserved.
+
+### Migration workflow
+
+[node-pg-migrate](https://github.com/salsita/node-pg-migrate) tracks applied
+migrations in `public.schema_migrations` (`name`, `run_on`). Migrations are
+append-only SQL files named `NNNN_lower_snake_description.sql`; every file must
+contain both markers and a non-empty rollback section:
+
+```sql
+-- Up Migration
+-- forward change
+
+-- Down Migration
+-- reverse change
+```
+
+Commands:
+
+| Command | Purpose |
+| --- | --- |
+| `npm run db:migrate` | Apply pending migrations using the environment (`.env` when present). |
+| `npm run db:migrate:status` | Show applied and pending migrations. |
+| `npm run db:migrate:down` | Roll back the most recent migration. |
+| `npm run db:baseline` | Record `0001` as applied on a legacy `urls` table without running it. |
+
+Inside Compose, use the same image and the one-shot `migrate` service:
+
+```bash
+docker compose run --rm migrate status
+docker compose run --rm migrate up
+docker compose run --rm migrate down 1
+docker compose run --rm migrate baseline
+```
+
+In a deployment, run the migration step before starting the new API version:
+
+```bash
+node dist/db/migrate.js up
+```
+
+Migrations use the discrete `HOST`, `POSTGRES_PORT`, `POSTGRES_USER`,
+`POSTGRES_DB`, and `POSTGRES_PASSWORD_FILE` settings. They ignore `DATABASE_URL`
+and log a warning if it is set, so an injected `DATABASE_URL` does not break the
+migration step. The API itself still rejects `DATABASE_URL` at startup.
+
+Migrations run in a single transaction per invocation, are applied in numeric
+order, and take a PostgreSQL advisory lock. Concurrent replicas, or a deploy job
+overlapping a startup migration, serialize: the later process waits, re-reads the
+history, and applies nothing.
+
+### Existing volumes and baselining
+
+An existing `postgres_data` volume from an older release already contains
+`public.urls` and rows but no `schema_migrations` table. Running migration `0001`
+would fail with `relation "urls" already exists`, so `up` detects this case:
+
+1. It checks the columns, types, nullability, primary key, and unique constraint on
+   `short_code`.
+2. If the shape matches `0001`, it records `0001_create_urls` as applied without
+   executing it and continues with any later migrations. The log line is
+   `baselined existing schema at migration 0001_create_urls`.
+3. If the shape does not match, it exits non-zero with the differences and writes
+   nothing to the history table. Reconcile the schema or restore from backup, then
+   retry.
+
+You can perform the same adoption explicitly with `npm run db:baseline` or
+`docker compose run --rm migrate baseline`. It requires `public.urls` to exist and
+refuses to stamp when migration history is already present.
+
+### Rollback
+
+`npm run db:migrate:down` runs the last applied migration's `-- Down Migration`
+section. **Rolling back `0001` drops the `urls` table and every row.** Back up
+first, and treat rollback as a deliberate operational action, not a routine
+deployment step. The migration test suite rolls back every migration in
+`db/migrations` against a disposable database.
+
+> Migrations are the only source of truth for the schema. There is no
+> `docker-entrypoint-initdb.d` mount, so an existing volume is never silently
+> skipped.
 
 ## Operations
 
@@ -611,6 +726,10 @@ complete.
 
 - At boot, `waitForDatabase()` retries `SELECT 1` up to 10 times with exponential
   backoff (250 ms to 5 s, with jitter).
+- If `RUN_MIGRATIONS_ON_STARTUP=true`, the process applies pending migrations
+  after the readiness check and before `app.listen()`, using the same advisory
+  lock as the deploy step. A migration failure logs the error, closes the pool,
+  and exits with status `1` without listening.
 - `pg.Pool` removes broken idle clients and creates new ones on demand. Idle-client
   errors are logged and do not crash the process.
 - Transient database errors return `503` with `Retry-After: 1`. Writes are not
@@ -738,13 +857,15 @@ Detailed runbooks, SLO queries, and the full log schema are in
 npm test               # unit + integration
 npm run test:unit      # fast, no database required
 npm run test:integration
+npm run test:migrations # migration file checks + disposable-database tests
 ```
 
 - **Unit tests** cover configuration validation (including missing, empty, and
   malformed values), the entrypoint's fail-fast behavior, health endpoints, error
   mapping, retry helpers, structured logging and redaction, request-ID correlation,
-  access logs, metric exposition, and the database monitor. They use Node's built-in
-  test runner and mock `pg.Pool` where needed.
+  access logs, metric exposition, and the database monitor. They also validate
+  migration filenames and require every migration to have non-empty up and down
+  sections. They use Node's built-in test runner and mock `pg.Pool` where needed.
 - **Integration tests** require Docker and, for the Compose overlay suite, Docker
   Compose. They start disposable `postgres:18.6` containers and verify PostgreSQL
   restart recovery, startup backoff, graceful shutdown with an in-flight request,
@@ -758,11 +879,19 @@ npm run test:integration
   `WormholeDatabaseUnavailable`, and checks that logs and metrics never expose
   credentials or query secrets. They create temporary password files and skip
   cleanly when Docker (or Compose, for the overlay suite) is unavailable.
+- **Migration tests** (`test/integration/migrations.test.ts`) cover a fresh `up`,
+  idempotent re-runs, rollback of every migration in order followed by re-apply,
+  auto-baselining a legacy volume with rows preserved, a real forward/rollback
+  upgrade using a fixture migration, shape-mismatch refusal, explicit baseline,
+  inconsistent history, `status`, `DATABASE_URL` being ignored, and guarded
+  startup.
 
-No coverage tooling or CI test pipeline is configured; run the suite locally before
-opening a pull request. The `Container CI` workflow builds the image, records a
-CycloneDX SBOM artifact with Syft, and scans it with Grype. It fails on fixable
-HIGH/CRITICAL findings and uploads SARIF to code scanning.
+The `Container CI` workflow builds the image, records a CycloneDX SBOM artifact
+with Syft, and scans it with Grype. It fails on fixable HIGH/CRITICAL findings and
+uploads SARIF to code scanning. A second `Validate migrations` job installs
+dependencies, builds, runs the unit suite, verifies Docker, and runs
+`npm run test:migrations` against a disposable PostgreSQL container. The other
+integration suites remain local-only; run them before opening a pull request.
 
 ## Scripts
 
@@ -771,9 +900,14 @@ HIGH/CRITICAL findings and uploads SARIF to code scanning.
 | `npm run dev` | `node --env-file .env --watch src/index.ts` | Development server with reload and native TypeScript execution. |
 | `npm run build` | `tsc` | Type-check and emit JavaScript to `dist/`. |
 | `npm start` | `node --env-file .env dist/index.js` | Run the compiled build with `.env`. |
+| `npm run db:migrate` | `node --env-file-if-exists=.env src/db/migrate.ts up` | Apply pending migrations. |
+| `npm run db:migrate:status` | `node --env-file-if-exists=.env src/db/migrate.ts status` | Show applied and pending migrations. |
+| `npm run db:migrate:down` | `node --env-file-if-exists=.env src/db/migrate.ts down` | Roll back the most recent migration. |
+| `npm run db:baseline` | `node --env-file-if-exists=.env src/db/migrate.ts baseline` | Record migration `0001` on an existing legacy schema. |
 | `npm test` | `node --test "test/**/*.test.ts"` | Run all tests. |
 | `npm run test:unit` | `node --test "test/unit/**/*.test.ts"` | Run unit tests only. |
 | `npm run test:integration` | `node --test --test-concurrency=1 "test/integration/**/*.test.ts"` | Run Docker-backed integration tests serially. |
+| `npm run test:migrations` | `node --test --test-concurrency=1 "test/unit/migrations.test.ts" "test/integration/migrations.test.ts"` | Validate migration files and run the disposable-database migration suite. |
 
 ## Project structure
 
@@ -781,7 +915,7 @@ HIGH/CRITICAL findings and uploads SARIF to code scanning.
 wormhole/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml               # image build, SBOM, Grype scan
+│       └── ci.yml               # image build, SBOM, Grype scan, migration tests
 ├── src/
 │   ├── index.ts                 # composition root: config, pool, routes, shutdown
 │   ├── config.ts                # environment schema and validation
@@ -790,6 +924,8 @@ wormhole/
 │   │   └── url.controller.ts
 │   ├── db/
 │   │   ├── db.ts                # pool lifecycle and database readiness
+│   │   ├── migrate.ts           # migration CLI (up/down/status/baseline)
+│   │   ├── migrations.ts        # runner, baseline shape check, history reads
 │   │   └── retry.ts             # transient-error detection and backoff
 │   ├── errors/
 │   │   └── AppError.ts
@@ -816,7 +952,8 @@ wormhole/
 │       ├── buildInfo.ts         # version and commit metadata
 │       └── generateRandomCode.ts
 ├── db/
-│   └── schema.sql
+│   └── migrations/
+│       └── 0001_create_urls.sql
 ├── docs/
 │   └── observability.md         # logs, metrics, SLOs, alerts, runbooks
 ├── observability/
@@ -826,10 +963,16 @@ wormhole/
 │   ├── prometheus.container.yml # container-mode scrape config
 │   └── grafana/                 # provisioned datasource and dashboard
 ├── test/
+│   ├── fixtures/
+│   │   └── migrations/
+│   │       └── 0002_add_test_marker.sql # test-only upgrade fixture
+│   ├── helpers/
+│   │   └── migrations.ts        # shared migration CLI spawn helper
 │   ├── integration/
 │   │   ├── compose-dev.test.ts
 │   │   ├── db-lifecycle.test.ts
 │   │   ├── health-readiness.test.ts
+│   │   ├── migrations.test.ts
 │   │   └── observability.test.ts
 │   └── unit/
 │       ├── config.test.ts
@@ -839,13 +982,14 @@ wormhole/
 │       ├── httpObservability.test.ts
 │       ├── logger.test.ts
 │       ├── metrics.test.ts
+│       ├── migrations.test.ts
 │       └── retry.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .npmrc
 ├── .nvmrc
 ├── Dockerfile                   # multi-stage production image
-├── compose.yml                  # PostgreSQL, API, and secret init
+├── compose.yml                  # PostgreSQL, migration step, API, and secret init
 ├── compose.dev.yml              # host DB port and dev network overlay
 ├── compose.observability.yml    # Prometheus, Alertmanager, Grafana
 ├── compose.observability.container.yml # container-mode scrape overlay
@@ -911,11 +1055,51 @@ host file directly. Check `docker compose logs secret-init`; the host file must
 exist and be readable by that container (it runs as root). Then check the app
 logs for the resolved path.
 
+### Migrations fail with `does not match 0001_create_urls`
+
+`public.urls` exists without migration history, but its shape does not match the
+baseline. The error lists the differences and nothing was written to
+`schema_migrations`. Compare the table with
+`db/migrations/0001_create_urls.sql`, reconcile it manually (or restore from
+backup), then rerun `npm run db:migrate`. Do not drop a table that contains data
+you need.
+
+### `Migration history is applied but public.urls is missing`
+
+`schema_migrations` records `0001_create_urls`, but the table does not exist. The
+database is inconsistent; restore `urls` from a backup or recreate the schema
+deliberately, then rerun the migration.
+
+### `Migration history references migrations that are no longer present`
+
+An applied migration file was deleted or renamed. Restore it before running any
+migration command; migration files are append-only.
+
+### Migrations appear stuck on the advisory lock
+
+Another process holds the PostgreSQL advisory lock. The migration runner waits by
+default, so this usually resolves itself; if it persists, inspect `pg_locks` and
+`pg_stat_activity` for a hung migration. The lock wait is unbounded.
+
+### `Migrations directory not found`
+
+The CLI defaults to the `db/migrations` directory next to its compiled module
+(`<repo>/db/migrations` for source and `/app/db/migrations` in the image). If you
+pass a directory explicitly, a relative path resolves from the current working
+directory.
+
+### Rollback removed the `urls` table
+
+Rolling back `0001_create_urls` runs `DROP TABLE urls`. Restore from backup if
+this was unintended. Take a backup before any `down` operation.
+
 ### Integration tests are skipped
 
 Docker is not available to the test process (or Docker Compose is unavailable for
 the Compose overlay suite). Start Docker and verify with `docker info` and
-`docker compose version`. Unit tests do not require Docker.
+`docker compose version`. Unit tests do not require Docker; the migration
+integration suite is also skipped without Docker, and CI runs `docker info` to
+prevent a silent skip.
 
 ## Production notes
 
@@ -963,9 +1147,15 @@ the Compose overlay suite). Start Docker and verify with `docker info` and
 - [ ] Collect stdout/stderr in your logging platform; parse it as JSON.
 - [ ] Scrape `/metrics` and load `observability/alerts.yml`; send alerts through
       Alertmanager to your on-call channel.
-- [ ] Apply schema changes with an explicit migration process; the initdb script
-      only runs on a fresh volume.
-- [ ] Back up PostgreSQL, and test restores, independently of this service.
+- [ ] Run the migration step (`node dist/db/migrate.js up`, the Compose `migrate`
+      service, or the image with the `up` command) before starting new app
+      replicas. Existing legacy volumes are baselined automatically after a shape
+      check.
+- [ ] Prefer the separate deploy step over `RUN_MIGRATIONS_ON_STARTUP=true`. If you
+      enable the flag, allow for migration time in the liveness probe's start
+      period.
+- [ ] Back up PostgreSQL, and test restores, independently of this service. Take a
+      backup before any rollback; rolling back `0001` drops the `urls` table.
 
 ### Scaling
 
@@ -983,7 +1173,9 @@ database writes.
   statistics expose only the total `access_count`.
 - Destination URL syntax is not validated. Any non-empty string is stored and
   returned.
-- No migration framework; `db/schema.sql` is initialization-only.
+- Migrations are append-only and ordered by filename; never edit or rename an
+  applied migration. Rolling back `0001` drops the `urls` table. The migration
+  advisory lock waits indefinitely if another process holds it.
 - Metrics are pull-based Prometheus only; there is no OTLP exporter or distributed
   tracing.
 - The bundled Alertmanager receiver is intentionally empty and must be wired to a

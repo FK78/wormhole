@@ -1,3 +1,9 @@
+x-app-image: &app-image
+  image: wormhole:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+
 services:
   db:
     container_name: wormhole-db
@@ -15,7 +21,6 @@ services:
       retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     networks:
       - backend
     cap_drop:
@@ -62,12 +67,43 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # One-shot migration step. The app waits for it to exit 0, so a schema
+  # failure blocks startup instead of serving against an outdated schema.
+  migrate:
+    <<: *app-image
+    container_name: wormhole-migrate
+    entrypoint: ["node", "dist/db/migrate.js"]
+    command: ["up"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    environment:
+      HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+      secret-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - postgres_secret:/run/secrets:ro
+
   app:
+    <<: *app-image
     container_name: wormhole-app
-    image: wormhole:local
-    build:
-      context: .
-      dockerfile: Dockerfile
     restart: always
     stop_grace_period: 15s
     environment:
@@ -76,6 +112,7 @@ services:
       DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-5000}
       DB_HEALTH_CHECK_INTERVAL_MS: ${DB_HEALTH_CHECK_INTERVAL_MS:-5000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      RUN_MIGRATIONS_ON_STARTUP: ${RUN_MIGRATIONS_ON_STARTUP:-false}
       HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER}
@@ -86,6 +123,8 @@ services:
       db:
         condition: service_healthy
       secret-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
     healthcheck:
       test:

@@ -22,6 +22,7 @@ WORKDIR /app
 
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node db/migrations ./db/migrations
 
 COPY --chown=node:node package.json ./
 
