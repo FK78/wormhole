@@ -3,3 +3,4 @@ node_modules
 secrets/
 dist/
 .observability-test-*/
+.compose-dev-test-*/
