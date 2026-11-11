@@ -184,18 +184,28 @@ apply migrations manually.
 
 ### Local development with watch mode
 
-To run the API on the host with `--watch` instead of in a container:
+To run the API on the host with `--watch` instead of in a container, complete the
+[Quick start](#quick-start) environment steps first so `.env` exists and
+`secrets/postgres_password.txt` contains the database password. Then:
 
 ```bash
 nvm use                 # or install Node.js >= 26.13.0 manually
 npm ci
 docker compose -f compose.yml -f compose.dev.yml up -d db
+docker compose -f compose.yml -f compose.dev.yml port db 5432
+# 127.0.0.1:5432
 npm run dev
 ```
 
-This publishes PostgreSQL on `localhost:5432` and runs the API from `src/`. Do not
-run it while the `app` container is publishing host port 3000; stop one or set a
-different `WORMHOLE_PORT`.
+The overlay publishes PostgreSQL on `127.0.0.1:${POSTGRES_PORT:-5432}` by
+attaching the database to a project-scoped, non-internal `dev` network; the
+`backend` network stays internal. Docker publishes ports only through a
+non-internal network. `HOST=127.0.0.1` in `.env` matches the IPv4 loopback
+binding, which matters on systems where `localhost` resolves to `::1` first.
+
+Do not run it while the `app` container is publishing host port 3000; stop one or
+set a different `WORMHOLE_PORT`. Verify the API with
+`curl -s http://localhost:3000/readyz`.
 
 ## Configuration
 
@@ -213,8 +223,8 @@ precedence over values in the file.
 | `POSTGRES_USER` | Yes | — | PostgreSQL username. |
 | `POSTGRES_PASSWORD_FILE` | Yes | — | Path to a file containing the PostgreSQL password. |
 | `POSTGRES_DB` | Yes | — | PostgreSQL database name. |
-| `POSTGRES_PORT` | No | `5432` | PostgreSQL port (1–65535). |
-| `HOST` | No | `localhost` | PostgreSQL host. |
+| `POSTGRES_PORT` | No | `5432` | PostgreSQL port (1–65535); also the host port published by `compose.dev.yml`. |
+| `HOST` | No | `localhost` | PostgreSQL host. `.env.example` sets `127.0.0.1` to match the development overlay's IPv4 loopback binding. |
 | `GIT_COMMIT` | No | `unknown` | Optional commit identifier surfaced by the health endpoints. Set it in your build or deployment pipeline. |
 
 `POSTGRES_PASSWORD_FILE` is resolved relative to the process working directory when
@@ -278,8 +288,12 @@ docker compose -f compose.yml -f compose.dev.yml up -d db
 npm run dev
 ```
 
-Runs `src/index.ts` directly with Node's type stripping and `--watch`, loading
-`.env` and restarting on file changes.
+The overlay publishes the database on `127.0.0.1:${POSTGRES_PORT:-5432}` through
+a non-internal `dev` network while `backend` stays internal; the base stack
+publishes no database port. `npm run dev` runs `src/index.ts` directly with
+Node's type stripping and `--watch`, loading `.env` and restarting on file
+changes. See the [Quick start](#quick-start) if `.env` or
+`secrets/postgres_password.txt` is missing.
 
 ### Container image
 
@@ -318,13 +332,13 @@ image's `CMD`.
 
 ### Local PostgreSQL
 
-`compose.yml` defines the database and the API. The database has an internal
-network, a Docker secret, a health check, container-hardening defaults, and a
-persistent volume. The API joins `backend` for database traffic and a separate
-`edge` bridge for its loopback-published port; Docker does not publish ports from
-an internal-only network. A one-shot `secret-init` service copies the Docker
-secret into a UID 1000-owned volume before the app starts, so the host file's
-owner and mode do not have to match the container user.
+`compose.yml` defines the database and the API. The database is attached only to
+the internal `backend` network, so the base stack never publishes PostgreSQL to
+the host. The API joins `backend` for database traffic and a separate `edge`
+bridge for its loopback-published port; Docker does not publish ports from an
+internal-only network. A one-shot `secret-init` service copies the Docker secret
+into a UID 1000-owned volume before the app starts, so the host file's owner and
+mode do not have to match the container user.
 
 Run the full stack with the base file:
 
@@ -332,17 +346,34 @@ Run the full stack with the base file:
 docker compose up -d --build
 ```
 
-`compose.dev.yml` is a development overlay that publishes the database port and
-makes `backend` reachable from the host. Use it when the API runs on the host:
+`compose.dev.yml` is the host-development overlay. It publishes PostgreSQL on
+`127.0.0.1:${POSTGRES_PORT:-5432}` and attaches the database to an additional
+project-scoped, non-internal `dev` network. A separate network is required
+because Docker publishes ports only through a non-internal network; flipping
+`backend.internal` is unreliable for existing networks and would remove the
+database's isolation. Use the overlay when the API runs on the host:
 
 ```bash
 docker compose -f compose.yml -f compose.dev.yml up -d db
+docker compose -f compose.yml -f compose.dev.yml port db 5432
+# 127.0.0.1:5432
 npm run dev
 ```
 
-The base file keeps PostgreSQL off the host network and publishes the API only on
-`127.0.0.1:${WORMHOLE_PORT:-3000}`. Change `WORMHOLE_PORT` in `.env` to move the
-host port.
+The full stack with the overlay also publishes the database, but the `app`
+container then owns port 3000:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml up -d --build
+```
+
+The base file publishes the API only on `127.0.0.1:${WORMHOLE_PORT:-3000}`.
+Change `WORMHOLE_PORT` in `.env` to move the API port and `POSTGRES_PORT` to move
+the database port. If you used an older overlay, confirm the backend network was
+reconciled with
+`docker network inspect wormhole_backend --format '{{.Internal}}'` (it should
+print `true`); if Compose reports the network is in use, run
+`docker compose down` once (without `-v`) and start the stack again.
 
 ## API reference
 
@@ -714,14 +745,19 @@ npm run test:integration
   mapping, retry helpers, structured logging and redaction, request-ID correlation,
   access logs, metric exposition, and the database monitor. They use Node's built-in
   test runner and mock `pg.Pool` where needed.
-- **Integration tests** require Docker and run serially. They start disposable
-  `postgres:18.6` containers and verify PostgreSQL restart recovery, startup
-  backoff, graceful shutdown with an in-flight request, liveness/readiness during an
-  outage, and automatic recovery. The observability suite also starts a
+- **Integration tests** require Docker and, for the Compose overlay suite, Docker
+  Compose. They start disposable `postgres:18.6` containers and verify PostgreSQL
+  restart recovery, startup backoff, graceful shutdown with an in-flight request,
+  liveness/readiness during an outage, and automatic recovery. The Compose
+  development-overlay suite starts a disposable project, verifies the base stack
+  leaves PostgreSQL unpublished and `backend` internal, then applies
+  `compose.dev.yml` and verifies the port is reachable on `127.0.0.1` while
+  `backend` remains internal. It also reruns `secret-init` against the existing
+  secret volume. The observability suite also starts a
   `prom/prometheus` container to verify that simulated database loss fires
   `WormholeDatabaseUnavailable`, and checks that logs and metrics never expose
   credentials or query secrets. They create temporary password files and skip
-  cleanly when Docker is unavailable.
+  cleanly when Docker (or Compose, for the overlay suite) is unavailable.
 
 No coverage tooling or CI test pipeline is configured; run the suite locally before
 opening a pull request. The `Container CI` workflow builds the image, records a
@@ -791,6 +827,7 @@ wormhole/
 │   └── grafana/                 # provisioned datasource and dashboard
 ├── test/
 │   ├── integration/
+│   │   ├── compose-dev.test.ts
 │   │   ├── db-lifecycle.test.ts
 │   │   ├── health-readiness.test.ts
 │   │   └── observability.test.ts
@@ -809,7 +846,7 @@ wormhole/
 ├── .nvmrc
 ├── Dockerfile                   # multi-stage production image
 ├── compose.yml                  # PostgreSQL, API, and secret init
-├── compose.dev.yml              # host port overlay for local development
+├── compose.dev.yml              # host DB port and dev network overlay
 ├── compose.observability.yml    # Prometheus, Alertmanager, Grafana
 ├── compose.observability.container.yml # container-mode scrape overlay
 ├── package.json
@@ -838,14 +875,24 @@ password](#changing-the-database-password).
 ### `connect ECONNREFUSED 127.0.0.1:5432`
 
 PostgreSQL is not running, is not published on the expected host port, or `HOST` /
-`POSTGRES_PORT` are wrong. Start the containerized stack, or start only the
-database with the development overlay for host-side development:
+`POSTGRES_PORT` are wrong. For host-side development, start only the database with
+the development overlay and confirm the mapping:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml up -d db
+docker compose -f compose.yml -f compose.dev.yml port db 5432
+# 127.0.0.1:5432
+docker compose ps
+```
+
+If `port` prints nothing (or `:0`), the overlay was not applied. If it prints a
+different port, update `POSTGRES_PORT` in `.env`; Compose and `npm run dev` read
+the same variable. The port binds to IPv4 loopback, so keep `HOST=127.0.0.1` in
+`.env` if `localhost` resolves to `::1` first. To run the full containerized
+stack instead (this occupies host port 3000):
 
 ```bash
 docker compose up -d --build
-# or
-docker compose -f compose.yml -f compose.dev.yml up -d db
-docker compose ps
 ```
 
 ### `listen EADDRINUSE: address already in use`
@@ -866,8 +913,9 @@ logs for the resolved path.
 
 ### Integration tests are skipped
 
-Docker is not available to the test process. Start Docker and verify with
-`docker info`. Unit tests do not require Docker.
+Docker is not available to the test process (or Docker Compose is unavailable for
+the Compose overlay suite). Start Docker and verify with `docker info` and
+`docker compose version`. Unit tests do not require Docker.
 
 ## Production notes
 

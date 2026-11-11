@@ -39,8 +39,12 @@ services:
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
+      # Recreate the destination first: on a re-run it is owned by UID 1000, and
+      # chmod on a file owned by another user requires CAP_FOWNER, which this
+      # container intentionally does not have.
       - >-
-        cp /run/secrets/postgres_password /run/secrets-out/postgres_password
+        rm -f /run/secrets-out/postgres_password
+        && cp /run/secrets/postgres_password /run/secrets-out/postgres_password
         && chmod 600 /run/secrets-out/postgres_password
         && chown 1000:1000 /run/secrets-out/postgres_password
     restart: "no"
