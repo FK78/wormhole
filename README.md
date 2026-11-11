@@ -752,7 +752,8 @@ npm run test:integration
   development-overlay suite starts a disposable project, verifies the base stack
   leaves PostgreSQL unpublished and `backend` internal, then applies
   `compose.dev.yml` and verifies the port is reachable on `127.0.0.1` while
-  `backend` remains internal. The observability suite also starts a
+  `backend` remains internal. It also reruns `secret-init` against the existing
+  secret volume. The observability suite also starts a
   `prom/prometheus` container to verify that simulated database loss fires
   `WormholeDatabaseUnavailable`, and checks that logs and metrics never expose
   credentials or query secrets. They create temporary password files and skip

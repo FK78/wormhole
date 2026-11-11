@@ -28,6 +28,8 @@ writeFileSync(
     "services:",
     "  db:",
     `    container_name: ${CONTAINER}`,
+    "  secret-init:",
+    `    container_name: ${PROJECT}-secret-init`,
     "networks:",
     "  edge:",
     `    name: ${PROJECT}-unused-edge`,
@@ -331,6 +333,31 @@ describe("compose dev overlay", { skip: skipReason }, () => {
       assert.equal(
         runCompose(true, ["port", "db", "5432"], composeEnvironment),
         `127.0.0.1:${hostPort}`,
+      );
+    },
+  );
+
+  test(
+    "secret-init succeeds when the secret volume already exists",
+    { timeout: 120_000 },
+    async () => {
+      const secretEnv = composeEnv(5432);
+      started = true;
+      cleanupEnv = cleanupEnv ?? secretEnv;
+
+      // The first run creates the volume; the second must not fail on the
+      // existing UID 1000-owned file.
+      runCompose(
+        true,
+        ["run", "--rm", "--no-deps", "secret-init"],
+        secretEnv,
+        60_000,
+      );
+      runCompose(
+        true,
+        ["run", "--rm", "--no-deps", "secret-init"],
+        secretEnv,
+        60_000,
       );
     },
   );
