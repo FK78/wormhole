@@ -140,31 +140,31 @@ listening.
 
 ## Quick start
 
+The containerized stack runs both PostgreSQL and the API:
+
 ```bash
-# 1. Clone and install
+# 1. Clone and create the local environment
 git clone https://github.com/FK78/wormhole.git
 cd wormhole
-nvm use                 # or install Node.js >= 26.13.0 manually
-npm ci
-
-# 2. Create the local environment
 cp .env.example .env
 
-# 3. Create the database password file (shared by the app and the container)
+# 2. Create the database password file (shared by the app and the container)
 mkdir -p secrets
 printf '%s' 'change-me' > secrets/postgres_password.txt
 chmod 600 secrets/postgres_password.txt
 
-# 4. Start PostgreSQL
-docker compose -f compose.yml -f compose.dev.yml up -d
-
-# 5. Start the API in watch mode
-npm run dev
+# 3. Build and start PostgreSQL and the API
+docker compose up -d --build
 ```
 
-Verify that the process and database are healthy:
+The one-shot `secret-init` service reads the password file as root and copies it
+into a volume owned by UID 1000, the app's runtime user. The host file can stay
+mode `600`, and the app never reads it directly.
+
+Verify that the containers and database are healthy:
 
 ```bash
+docker compose ps
 curl -s http://localhost:3000/healthz
 curl -s http://localhost:3000/readyz
 ```
@@ -179,8 +179,23 @@ curl -s -X POST http://localhost:3000/shorten \
 
 The schema in `db/schema.sql` is applied automatically the first time the
 PostgreSQL data volume is initialized. If the volume already exists, the schema is
-not re-applied; reset it with `docker compose -f compose.yml -f compose.dev.yml
-down -v` (this destroys data) or apply migrations manually.
+not re-applied; reset it with `docker compose down -v` (this destroys data) or
+apply migrations manually.
+
+### Local development with watch mode
+
+To run the API on the host with `--watch` instead of in a container:
+
+```bash
+nvm use                 # or install Node.js >= 26.13.0 manually
+npm ci
+docker compose -f compose.yml -f compose.dev.yml up -d db
+npm run dev
+```
+
+This publishes PostgreSQL on `localhost:5432` and runs the API from `src/`. Do not
+run it while the `app` container is publishing host port 3000; stop one or set a
+different `WORMHOLE_PORT`.
 
 ## Configuration
 
@@ -205,8 +220,9 @@ precedence over values in the file.
 `POSTGRES_PASSWORD_FILE` is resolved relative to the process working directory when
 the app reads it. Compose resolves its `secrets.postgres_password.file` path
 relative to the Compose file, which is the repository root in the commands here.
-Keep the app and Compose pointed at the same file so there is only one password to
-manage.
+The one-shot `secret-init` service copies that Docker secret into a volume and the
+app reads `/run/secrets/postgres_password`, so the host file remains the single
+source of truth.
 
 ### Validation behavior
 
@@ -245,7 +261,7 @@ change the password already stored in PostgreSQL; the app will then fail
 authentication. Either update the role explicitly:
 
 ```bash
-docker compose -f compose.yml -f compose.dev.yml exec db \
+docker compose exec db \
   psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD 'new-password';"
 ```
 
@@ -255,12 +271,31 @@ or recreate the development volume with `down -v` (destroys all data).
 
 ### Development
 
+Run the API on the host with watch mode, with PostgreSQL from Compose:
+
 ```bash
+docker compose -f compose.yml -f compose.dev.yml up -d db
 npm run dev
 ```
 
 Runs `src/index.ts` directly with Node's type stripping and `--watch`, loading
 `.env` and restarting on file changes.
+
+### Container image
+
+`Dockerfile` is a multi-stage build: `npm ci` and `tsc` run in build stages, and
+the runtime stage contains only production dependencies, `dist/`, and
+`package.json`. The image runs as the unprivileged `node` user (UID 1000), exposes
+port 3000, and starts with `node dist/index.js`.
+
+```bash
+docker build --tag wormhole:local .
+```
+
+`compose.yml` builds the same image for the `app` service. `docker compose up`
+starts PostgreSQL and the API; `compose.dev.yml` is only needed when the API runs
+on the host. The Node 26.13.0 base image is pinned by digest, so update `.nvmrc`,
+`engines.node`, and the digest together.
 
 ### Production build
 
@@ -278,22 +313,36 @@ npm start              # node --env-file .env dist/index.js
 
 Run `npm run build` before omitting dev dependencies; TypeScript is a dev
 dependency. For orchestrators, inject environment variables and secrets directly
-and run `node dist/index.js` rather than relying on `.env`.
+and run `node dist/index.js` rather than relying on `.env`; this is also the
+image's `CMD`.
 
 ### Local PostgreSQL
 
-`compose.yml` defines the database with an internal network, a Docker secret, a
-health check, container-hardening defaults, and a persistent volume.
-`compose.dev.yml` is a development overlay that publishes the database port to the
-host. Use both files for local work:
+`compose.yml` defines the database and the API. The database has an internal
+network, a Docker secret, a health check, container-hardening defaults, and a
+persistent volume. The API joins `backend` for database traffic and a separate
+`edge` bridge for its loopback-published port; Docker does not publish ports from
+an internal-only network. A one-shot `secret-init` service copies the Docker
+secret into a UID 1000-owned volume before the app starts, so the host file's
+owner and mode do not have to match the container user.
+
+Run the full stack with the base file:
 
 ```bash
-docker compose -f compose.yml -f compose.dev.yml up -d
+docker compose up -d --build
 ```
 
-The base file alone keeps PostgreSQL off the host network, which is useful when the
-API runs on the same Docker network. No application Dockerfile is included; the
-service is expected to run as a Node process.
+`compose.dev.yml` is a development overlay that publishes the database port and
+makes `backend` reachable from the host. Use it when the API runs on the host:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml up -d db
+npm run dev
+```
+
+The base file keeps PostgreSQL off the host network and publishes the API only on
+`127.0.0.1:${WORMHOLE_PORT:-3000}`. Change `WORMHOLE_PORT` in `.env` to move the
+host port.
 
 ## API reference
 
@@ -616,8 +665,19 @@ it.
 
 ### Local Prometheus, Alertmanager, and Grafana
 
+For the host-run API (`npm run dev`), the base observability stack scrapes
+`host.docker.internal:3000`:
+
 ```bash
 docker compose -f compose.observability.yml up -d
+```
+
+For the containerized API, start the app stack first, then add the container
+overlay. Prometheus joins `wormhole_edge` and scrapes `app:3000` directly:
+
+```bash
+docker compose up -d --build
+docker compose -f compose.observability.yml -f compose.observability.container.yml up -d
 ```
 
 | Service | URL |
@@ -626,15 +686,16 @@ docker compose -f compose.observability.yml up -d
 | Alertmanager | http://localhost:9093 |
 | Grafana | http://localhost:3001 (`admin`/`admin` by default) |
 
-Prometheus scrapes `host.docker.internal:3000`; edit
-[`observability/prometheus.yml`](observability/prometheus.yml) if `WORMHOLE_PORT`
-differs. The Grafana dashboard is provisioned automatically. To verify the
-database-loss alert, run the API and database, then:
+The overlay requires the `wormhole_edge` network, which the app stack creates.
+Edit [`observability/prometheus.yml`](observability/prometheus.yml) if
+`WORMHOLE_PORT` differs for the host-run API; the container overlay always uses
+the internal port 3000. The Grafana dashboard is provisioned automatically. To
+verify the database-loss alert, run the API and database, then:
 
 ```bash
-docker compose -f compose.yml -f compose.dev.yml stop db
+docker compose stop db
 # wormhole_database_up becomes 0; WormholeDatabaseUnavailable fires after ~30s.
-docker compose -f compose.yml -f compose.dev.yml start db
+docker compose start db
 ```
 
 Detailed runbooks, SLO queries, and the full log schema are in
@@ -663,7 +724,9 @@ npm run test:integration
   cleanly when Docker is unavailable.
 
 No coverage tooling or CI test pipeline is configured; run the suite locally before
-opening a pull request.
+opening a pull request. The `Container CI` workflow builds the image, records a
+CycloneDX SBOM artifact with Syft, and scans it with Grype. It fails on fixable
+HIGH/CRITICAL findings and uploads SARIF to code scanning.
 
 ## Scripts
 
@@ -680,6 +743,9 @@ opening a pull request.
 
 ```text
 wormhole/
+├── .github/
+│   └── workflows/
+│       └── ci.yml               # image build, SBOM, Grype scan
 ├── src/
 │   ├── index.ts                 # composition root: config, pool, routes, shutdown
 │   ├── config.ts                # environment schema and validation
@@ -720,7 +786,8 @@ wormhole/
 ├── observability/
 │   ├── alerts.yml               # Prometheus alert rules
 │   ├── alertmanager.yml
-│   ├── prometheus.yml
+│   ├── prometheus.yml           # host-run API scrape config
+│   ├── prometheus.container.yml # container-mode scrape config
 │   └── grafana/                 # provisioned datasource and dashboard
 ├── test/
 │   ├── integration/
@@ -736,12 +803,15 @@ wormhole/
 │       ├── logger.test.ts
 │       ├── metrics.test.ts
 │       └── retry.test.ts
+├── .dockerignore
 ├── .env.example
 ├── .npmrc
 ├── .nvmrc
-├── compose.yml                  # PostgreSQL base service
-├── compose.dev.yml              # development port overlay
+├── Dockerfile                   # multi-stage production image
+├── compose.yml                  # PostgreSQL, API, and secret init
+├── compose.dev.yml              # host port overlay for local development
 ├── compose.observability.yml    # Prometheus, Alertmanager, Grafana
+├── compose.observability.container.yml # container-mode scrape overlay
 ├── package.json
 ├── package-lock.json
 ├── tsconfig.json
@@ -768,11 +838,14 @@ password](#changing-the-database-password).
 ### `connect ECONNREFUSED 127.0.0.1:5432`
 
 PostgreSQL is not running, is not published on the expected host port, or `HOST` /
-`POSTGRES_PORT` are wrong. Start it with the development overlay:
+`POSTGRES_PORT` are wrong. Start the containerized stack, or start only the
+database with the development overlay for host-side development:
 
 ```bash
-docker compose -f compose.yml -f compose.dev.yml up -d
-docker compose -f compose.yml -f compose.dev.yml ps
+docker compose up -d --build
+# or
+docker compose -f compose.yml -f compose.dev.yml up -d db
+docker compose ps
 ```
 
 ### `listen EADDRINUSE: address already in use`
@@ -783,6 +856,13 @@ Another process owns `WORMHOLE_PORT`. Stop it or set a different port in `.env`.
 
 `npm run dev` and `npm start` load `.env`. Run `cp .env.example .env`, or run
 `node dist/index.js` with environment variables supplied by your platform.
+
+### `POSTGRES_PASSWORD_FILE: cannot read`
+
+The app reads the copy created by the one-shot `secret-init` service, not the
+host file directly. Check `docker compose logs secret-init`; the host file must
+exist and be readable by that container (it runs as root). Then check the app
+logs for the resolved path.
 
 ### Integration tests are skipped
 
@@ -800,12 +880,15 @@ Docker is not available to the test process. Start Docker and verify with
   especially for `POST /shorten`.
 - **Destination URLs are stored without syntax validation or scheme restrictions.**
   Add validation if untrusted clients can submit links.
-- **Secrets stay out of source control.** `secrets/` and `.env` are gitignored. Mount
-  the password file read-only with restrictive permissions (`chmod 600`). Do not bake
-  it into an image.
-- **The Compose database is hardened** with `cap_drop: ALL`, only the capabilities
-  PostgreSQL needs, `no-new-privileges`, and an internal network. Keep the base file
-  without a published port in shared environments.
+- **Secrets stay out of source control.** `secrets/` and `.env` are gitignored. A
+  one-shot `secret-init` service reads the password file as root, copies it into a
+  volume owned by UID 1000, and the app reads only that copy. Keep the host file
+  mode `600`; do not bake it into an image.
+- **The Compose services are hardened** with `cap_drop: ALL`, `no-new-privileges`,
+  a read-only root filesystem for the API, and an internal network for database
+  traffic. The API joins a second `edge` bridge only because Docker cannot publish
+  ports from an internal-only network. Keep the loopback port binding unless a
+  reverse proxy owns ingress.
 - **Dependencies are pinned** to exact versions in `package.json` and the lockfile;
   `engine-strict=true` prevents installing on an unsupported Node release.
 - **`/metrics` is unauthenticated.** Keep it on a private interface or restrict it
@@ -814,10 +897,15 @@ Docker is not available to the test process. Start Docker and verify with
 
 ### Deployment checklist
 
-- [ ] Build with `npm ci && npm run build` in CI or an image builder.
+- [ ] Build the image with `docker build` in CI or an image builder; the `Container
+      CI` workflow builds it and scans it with Grype.
+- [ ] Run the image as the non-root `node` user and keep the root filesystem
+      read-only unless the workload needs writable paths.
+- [ ] Review the uploaded SBOM and Grype SARIF results; do not ship fixable
+      HIGH/CRITICAL findings.
 - [ ] Provide configuration through the process environment; avoid shipping `.env`.
-- [ ] Provide `POSTGRES_PASSWORD_FILE` as a mounted secret, readable by the runtime
-      user only.
+- [ ] Provide `POSTGRES_PASSWORD_FILE` as a mounted secret; the Compose
+      `secret-init` service copies it to a UID 1000-owned volume for the app.
 - [ ] Point `HOST` and `POSTGRES_PORT` at a private database endpoint.
 - [ ] Configure `/healthz` as the liveness probe and `/readyz` as the readiness
       probe.

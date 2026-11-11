@@ -1,0 +1,13 @@
+services:
+  prometheus:
+    volumes:
+      - ./observability/prometheus.container.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - observability
+      - wormhole_edge
+
+networks:
+  wormhole_edge:
+    external: true

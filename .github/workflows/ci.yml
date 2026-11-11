@@ -1,0 +1,79 @@
+name: Container CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-scan:
+    name: Build and scan image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build --tag wormhole:ci .
+
+      - name: Verify image hardening
+        run: |
+          set -eu
+          test "$(docker image inspect wormhole:ci --format '{{.Config.User}}')" = "node"
+          docker run --rm --entrypoint sh wormhole:ci -c '
+            set -eu
+            test "$(id -u)" = "1000"
+            test ! -d /app/src
+            test ! -d /app/test
+            test ! -d /app/node_modules/typescript
+            test ! -e /app/.env
+            test ! -e /app/secrets
+            test ! -e /usr/local/lib/node_modules/npm
+          '
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: wormhole:ci
+          format: cyclonedx-json
+          output-file: wormhole.sbom.cdx.json
+          artifact-name: wormhole-sbom
+          syft-version: v1.54.0
+
+      - name: Scan SBOM with Grype
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: wormhole.sbom.cdx.json
+          fail-build: true
+          only-fixed: true
+          severity-cutoff: high
+          output-format: sarif
+          output-file: grype-results.sarif
+          grype-version: v0.118.0
+          cache-db: true
+
+      - name: Upload SARIF
+        # Fork PRs get a read-only token, so code scanning uploads are skipped.
+        if: >-
+          always() && hashFiles('grype-results.sarif') != '' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: grype-results.sarif
+          category: grype

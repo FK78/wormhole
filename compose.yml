@@ -31,8 +31,86 @@ services:
     secrets:
       - postgres_password
 
+  # One-shot: copy the host secret into a volume owned by the app's UID so the
+  # app never depends on the host file's owner/mode. Runs as root, no network.
+  secret-init:
+    container_name: wormhole-secret-init
+    image: postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        cp /run/secrets/postgres_password /run/secrets-out/postgres_password
+        && chmod 600 /run/secrets-out/postgres_password
+        && chown 1000:1000 /run/secrets-out/postgres_password
+    restart: "no"
+    network_mode: none
+    read_only: true
+    volumes:
+      - postgres_secret:/run/secrets-out
+    secrets:
+      - postgres_password
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    container_name: wormhole-app
+    image: wormhole:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    stop_grace_period: 15s
+    environment:
+      WORMHOLE_PORT: 3000
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+      DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-5000}
+      DB_HEALTH_CHECK_INTERVAL_MS: ${DB_HEALTH_CHECK_INTERVAL_MS:-5000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    depends_on:
+      db:
+        condition: service_healthy
+      secret-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${WORMHOLE_PORT:-3000}:3000"
+    networks:
+      - backend
+      - edge
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - postgres_secret:/run/secrets:ro
+
 volumes:
   postgres_data:
+  postgres_secret:
 
 secrets:
   postgres_password:
@@ -41,3 +119,8 @@ secrets:
 networks:
   backend:
     internal: true
+  # Docker does not publish ports from an internal-only network; the app joins
+  # this normal bridge for its loopback port. The explicit name lets the
+  # observability overlay join it as an external network.
+  edge:
+    name: wormhole_edge
