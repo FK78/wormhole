@@ -233,6 +233,7 @@ const selectOne = async (hostPort: number): Promise<number | undefined> => {
     password: DB_PASSWORD,
     database: DB_NAME,
     connectionTimeoutMillis: 1_000,
+    query_timeout: 2_000,
   });
 
   try {
