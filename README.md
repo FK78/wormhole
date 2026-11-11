@@ -27,13 +27,15 @@ Because `https://www.example.com/products/categories/electronics/smartphones/202
 
 ## Endpoints
 
-| Method   | Route                 | What it does                       |
-| -------- | --------------------- | ---------------------------------- |
-| `POST`   | `/shorten`            | Compress a URL into oblivion       |
-| `GET`    | `/shorten/:id`        | Retrieve the original URL          |
-| `PUT`    | `/shorten/:id`        | Point the shortcode somewhere else |
-| `DELETE` | `/shorten/:id`        | Erase it from existence            |
-| `GET`    | `/shorten/:id/stats`  | See how popular your link is       |
+| Method   | Route                 | What it does                          |
+| -------- | --------------------- | ------------------------------------- |
+| `POST`   | `/shorten`            | Compress a URL into oblivion          |
+| `GET`    | `/shorten/:id`        | Retrieve the original URL             |
+| `PUT`    | `/shorten/:id`        | Point the shortcode somewhere else    |
+| `DELETE` | `/shorten/:id`        | Erase it from existence               |
+| `GET`    | `/shorten/:id/stats`  | See how popular your link is          |
+| `GET`    | `/healthz`            | Liveness probe - never touches the DB |
+| `GET`    | `/readyz`             | Readiness probe - verifies the DB     |
 
 ## Usage
 
@@ -106,6 +108,43 @@ curl http://localhost:3000/shorten/abc123/stats
 - Transient database failures return `503` with a `Retry-After` header. Writes are not automatically retried, because a connection can fail after a write has already committed.
 - `SIGTERM` and `SIGINT` stop accepting new connections, drain in-flight requests for up to `SHUTDOWN_TIMEOUT_MS`, close the pool, then exit. If the deadline is reached, remaining connections are force-closed and the process exits with code `1`.
 
+## Health Checks
+
+`GET /healthz` is a **liveness** probe: it returns `200` as long as the process is running and never touches the database. Point process restarts at this endpoint, not traffic routing.
+
+`GET /readyz` is a **readiness** probe: it runs `SELECT 1` with a 1-second timeout. It returns `200` when the database answers and `503` when it does not. Readiness is checked on every request, so it recovers automatically once the database is back - no restart needed. Point load balancer/orchestrator traffic routing at this endpoint.
+
+```bash
+curl -i http://localhost:3000/healthz
+curl -i http://localhost:3000/readyz
+```
+
+Healthy response:
+
+```json
+{
+  "status": "ready",
+  "version": "1.0.0",
+  "commit": "unknown",
+  "uptimeSeconds": 42,
+  "checks": { "database": "ok" }
+}
+```
+
+Database unavailable (`503` with `Retry-After: 1`):
+
+```json
+{
+  "status": "unavailable",
+  "version": "1.0.0",
+  "commit": "unknown",
+  "uptimeSeconds": 42,
+  "checks": { "database": "unavailable" }
+}
+```
+
+`version` comes from `package.json`. `commit` comes from the optional `GIT_COMMIT` environment variable (set it at build time, for example with the git SHA) and is `"unknown"` when unset. Responses never include connection strings, credentials, or stack traces, and both endpoints send `Cache-Control: no-store`.
+
 ## Testing
 
 ```bash
@@ -114,7 +153,7 @@ npm run test:unit      # fast tests, no database required
 npm run test:integration
 ```
 
-The integration test starts its own `postgres:18.6` container with a fixed, dynamic host port, restarts PostgreSQL while the API is serving, checks that the process survives and recovers, and verifies graceful shutdown with an in-flight request. It skips cleanly when Docker is unavailable.
+Unit tests use Node's built-in test runner and mock the `pg.Pool`. The integration tests start their own `postgres:18.6` containers with fixed, dynamic host ports: one restarts PostgreSQL while the API is serving to verify the process survives and recovers, and checks graceful shutdown with an in-flight request; the other verifies both health endpoints while the database is up, stops the container to check that `/readyz` returns `503` while `/healthz` stays `200`, then restarts it to verify automatic recovery. Both skip cleanly when Docker is unavailable.
 
 ## Getting Started
 
@@ -181,10 +220,13 @@ wormhole/
 ├── src/
 │   ├── index.ts
 │   ├── routes/
+│   │   ├── health.router.ts
 │   │   └── url.router.ts
 │   ├── controllers/
+│   │   ├── health.controller.ts
 │   │   └── url.controller.ts
 │   ├── services/
+│   │   ├── health.service.ts
 │   │   └── url.service.ts
 │   ├── queries/
 │   │   └── url.queries.ts
@@ -194,18 +236,21 @@ wormhole/
 │   ├── errors/
 │   │   └── AppError.ts
 │   ├── utils/
+│   │   ├── buildInfo.ts
 │   │   └── generateRandomCode.ts
 │   └── db/
 │       ├── db.ts
 │       └── retry.ts
-├── db/
-│   └── schema.sql
 ├── test/
 │   ├── integration/
-│   │   └── db-lifecycle.test.ts
+│   │   ├── db-lifecycle.test.ts
+│   │   └── health-readiness.test.ts
 │   └── unit/
 │       ├── errorHandler.test.ts
+│       ├── health.test.ts
 │       └── retry.test.ts
+├── db/
+│   └── schema.sql
 ├── .env.example
 ├── compose.yml
 ├── compose.dev.yml

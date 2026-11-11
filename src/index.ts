@@ -1,5 +1,6 @@
 import express from "express";
 import urlRoutes from "./routes/url.router.ts";
+import healthRoutes from "./routes/health.router.ts";
 import { pool, waitForDatabase } from "./db/db.ts";
 import { errorHandler, routeNotFound } from "./middleware/errorHandler.ts";
 
@@ -11,6 +12,7 @@ const shutdownTimeoutMs = (() => {
 const app = express();
 
 app.use(express.json());
+app.use(healthRoutes);
 app.use("/shorten", urlRoutes);
 app.use(routeNotFound);
 app.use(errorHandler);
