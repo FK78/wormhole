@@ -1,0 +1,13 @@
+route:
+  receiver: default
+  group_by:
+    - alertname
+    - service
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 4h
+
+receivers:
+  # The baseline keeps alerts visible in the Alertmanager UI. Add a webhook,
+  # email, PagerDuty, or Slack receiver here for the on-call path.
+  - name: default

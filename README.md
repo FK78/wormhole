@@ -37,6 +37,7 @@
 - [API reference](#api-reference)
 - [Database](#database)
 - [Operations](#operations)
+- [Observability](#observability)
 - [Testing](#testing)
 - [Scripts](#scripts)
 - [Project structure](#project-structure)
@@ -77,6 +78,9 @@ error when it cannot start correctly.
   requests, close the pool, and exit cleanly.
 - **Liveness and readiness probes** — `/healthz` never touches the database;
   `/readyz` checks it with a timeout and never leaks connection details.
+- **Structured observability** — JSON logs with request IDs and redaction, RED
+  metrics plus database pool gauges at `/metrics`, SLOs, alert rules, and a
+  provisioned Grafana dashboard.
 - **Strict TypeScript, ESM, native type stripping** — no build step for development.
 
 ## Architecture
@@ -117,8 +121,9 @@ listening.
 | Language | TypeScript 7, strict mode, ESM |
 | Database | PostgreSQL 18.6 (pinned image digest in Compose) |
 | Database driver | `pg` 8 with `pg.Pool`, raw parameterized SQL |
+| Observability | JSON logs, Prometheus `/metrics`, alert rules, Grafana dashboard |
 | Tests | Node.js built-in test runner (`node:test`) |
-| Containerization | Docker Compose for the local PostgreSQL instance |
+| Containerization | Docker Compose for PostgreSQL and the local observability stack |
 
 ## Requirements
 
@@ -130,7 +135,8 @@ listening.
 - **Docker Engine** for the integration test suite, and **Docker Compose v2** for
   the local PostgreSQL instance. PostgreSQL can also be provided externally.
 - Free local ports: `3000` for the API and `5432` for PostgreSQL by default, both
-  configurable.
+  configurable. The optional observability stack uses `9090` (Prometheus), `9093`
+  (Alertmanager), and `3001` (Grafana).
 
 ## Quick start
 
@@ -187,6 +193,8 @@ precedence over values in the file.
 | `WORMHOLE_PORT` | No | `3000` | Port the HTTP server listens on (1–65535). |
 | `SHUTDOWN_TIMEOUT_MS` | No | `10000` | Maximum time to drain in-flight requests before forcing exit (1–2147483647). |
 | `DB_CONNECT_TIMEOUT_MS` | No | `5000` | Connection timeout for each `pg.Pool` connection attempt (1–2147483647). |
+| `DB_HEALTH_CHECK_INTERVAL_MS` | No | `5000` | How often the database availability probe runs (1–2147483647). |
+| `LOG_LEVEL` | No | `info` | Minimum log level: `debug`, `info`, `warn`, or `error`. |
 | `POSTGRES_USER` | Yes | — | PostgreSQL username. |
 | `POSTGRES_PASSWORD_FILE` | Yes | — | Path to a file containing the PostgreSQL password. |
 | `POSTGRES_DB` | Yes | — | PostgreSQL database name. |
@@ -220,7 +228,8 @@ Rules:
 - Missing or empty optional variables use their defaults. An empty `POSTGRES_PORT`
   is treated as unset, not as `0`.
 - Ports must be integers in `1–65535`. Timeouts must be positive integers no larger
-  than `2147483647` (the `setTimeout` maximum).
+  than `2147483647` (the `setTimeout` maximum). `LOG_LEVEL` must be one of the
+  levels listed above.
 - `POSTGRES_PASSWORD_FILE` must point to a readable, non-empty file. Trailing
   newlines are stripped the same way PostgreSQL's entrypoint strips them; other
   whitespace is preserved so the app and the container use identical bytes.
@@ -301,6 +310,7 @@ ISO 8601 strings; `updatedAt` is `null` until the link is first updated.
 | `GET` | `/shorten/:id/stats` | Read link metadata and access count. | `200 OK` |
 | `GET` | `/healthz` | Liveness probe. Never touches the database. | `200 OK` |
 | `GET` | `/readyz` | Readiness probe. Checks the database. | `200 OK` / `503` |
+| `GET` | `/metrics` | Prometheus metrics for RED signals and the database pool. | `200 OK` |
 
 Short codes are six characters from `0-9`, `a-z`, and `A-Z`. Creation retries up to
 five times if the generated code collides with an existing row.
@@ -546,10 +556,86 @@ Set the orchestrator's termination grace period to at least
 
 ### Logging
 
-The service writes plain-text operational logs to stdout and stderr: startup,
-database readiness, retries, idle-client errors, shutdown progress, and unexpected
-errors. There is no request logging, structured logging, or tracing. Collect
-stdout/stderr with your platform's log pipeline if you need retention or search.
+Every log line is a single JSON object written to stdout (`debug`, `info`) or stderr
+(`warn`, `error`):
+
+```json
+{"timestamp":"2026-11-11T12:34:56.789Z","level":"info","service":"wormhole","message":"HTTP request completed","requestId":"demo-request-1","method":"GET","route":"/shorten/:id","status":200,"durationMs":1.234}
+```
+
+- Fields are `timestamp`, `level`, `service`, `message`, and event-specific
+  context. `LOG_LEVEL` controls verbosity.
+- Send `X-Request-ID` or let the server generate one. It is echoed in the response
+  and attached to every access, error, and database log line for that request.
+- Access logs record method, bounded route pattern, status, latency, and request
+  ID. `5xx` is logged at `error`, `4xx` at `warn`; requests to `/healthz`,
+  `/readyz`, and `/metrics` are excluded.
+- Error logs include `name`, `message`, `stack`, and `code`, but never request
+  bodies, headers, query strings, or pg's row-level fields.
+- Credentials, connection strings, and URL query/fragment data are redacted at
+  every nesting level.
+
+Collect stdout/stderr with your platform's log pipeline. The complete schema and
+redaction rules are in [docs/observability.md](docs/observability.md).
+
+## Observability
+
+### Metrics
+
+`GET /metrics` exposes Prometheus text format:
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `wormhole_http_requests_total{method,route,status}` | counter | Request count and error rate. |
+| `wormhole_http_request_duration_seconds{method,route}` | histogram | Request latency (p50/p95/p99). |
+| `wormhole_database_up` | gauge | Last database health check (`1`/`0`). |
+| `wormhole_database_health_checks_total{status}` | counter | Database probe outcomes. |
+| `wormhole_db_pool_total_connections` | gauge | Pool connections in use or idle. |
+| `wormhole_db_pool_idle_connections` | gauge | Idle pool connections. |
+| `wormhole_db_pool_waiting_clients` | gauge | Requests waiting for a connection. |
+| `wormhole_db_pool_max_connections` | gauge | Pool limit. |
+| `wormhole_build_info{version,commit}` | gauge | Build identity; always `1`. |
+
+Route labels use patterns such as `/shorten/:id`, never raw short codes, so metric
+cardinality stays bounded. Health probes and `/metrics` scrapes are excluded from
+RED metrics. A background probe updates the database gauge every
+`DB_HEALTH_CHECK_INTERVAL_MS`, independent of HTTP traffic. The endpoint is
+unauthenticated; restrict it at the network or ingress layer in production.
+
+### SLOs and alerts
+
+Targets over a rolling 30-day window: 99.9% availability, error rate below 1%,
+p95 latency at or below 300 ms, and p99 latency at or below 1 s. Alert rules in
+[`observability/alerts.yml`](observability/alerts.yml) cover database
+unavailability, high error rate, p95/p99 latency, and pool saturation/waiters.
+`WormholeDatabaseUnavailable` fires 30 seconds after `wormhole_database_up` drops
+to `0`.
+
+### Local Prometheus, Alertmanager, and Grafana
+
+```bash
+docker compose -f compose.observability.yml up -d
+```
+
+| Service | URL |
+| --- | --- |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
+| Grafana | http://localhost:3001 (`admin`/`admin` by default) |
+
+Prometheus scrapes `host.docker.internal:3000`; edit
+[`observability/prometheus.yml`](observability/prometheus.yml) if `WORMHOLE_PORT`
+differs. The Grafana dashboard is provisioned automatically. To verify the
+database-loss alert, run the API and database, then:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml stop db
+# wormhole_database_up becomes 0; WormholeDatabaseUnavailable fires after ~30s.
+docker compose -f compose.yml -f compose.dev.yml start db
+```
+
+Detailed runbooks, SLO queries, and the full log schema are in
+[docs/observability.md](docs/observability.md).
 
 ## Testing
 
@@ -561,12 +647,16 @@ npm run test:integration
 
 - **Unit tests** cover configuration validation (including missing, empty, and
   malformed values), the entrypoint's fail-fast behavior, health endpoints, error
-  mapping, and retry helpers. They use Node's built-in test runner and mock
-  `pg.Pool` where needed.
+  mapping, retry helpers, structured logging and redaction, request-ID correlation,
+  access logs, metric exposition, and the database monitor. They use Node's built-in
+  test runner and mock `pg.Pool` where needed.
 - **Integration tests** require Docker and run serially. They start disposable
   `postgres:18.6` containers and verify PostgreSQL restart recovery, startup
   backoff, graceful shutdown with an in-flight request, liveness/readiness during an
-  outage, and automatic recovery. They create temporary password files and skip
+  outage, and automatic recovery. The observability suite also starts a
+  `prom/prometheus` container to verify that simulated database loss fires
+  `WormholeDatabaseUnavailable`, and checks that logs and metrics never expose
+  credentials or query secrets. They create temporary password files and skip
   cleanly when Docker is unavailable.
 
 No coverage tooling or CI test pipeline is configured; run the suite locally before
@@ -600,13 +690,21 @@ wormhole/
 │   │   └── AppError.ts
 │   ├── middleware/
 │   │   ├── errorHandler.ts      # AppError, 500, and transient-DB 503 mapping
+│   │   ├── httpObservability.ts # access logs and RED metrics
+│   │   ├── requestContext.ts    # request IDs and async log context
 │   │   └── validate.ts          # required-field validation
+│   ├── observability/
+│   │   ├── http.ts              # bounded route labels
+│   │   ├── logger.ts            # JSON logger and redaction
+│   │   └── metrics.ts           # Prometheus registry and exposition
 │   ├── queries/
 │   │   └── url.queries.ts       # parameterized SQL
 │   ├── routes/
 │   │   ├── health.router.ts
+│   │   ├── metrics.router.ts
 │   │   └── url.router.ts
 │   ├── services/
+│   │   ├── databaseMonitor.ts   # background availability probe
 │   │   ├── health.service.ts    # readiness query with timeout
 │   │   └── url.service.ts       # domain rules and collision retries
 │   └── utils/
@@ -614,20 +712,33 @@ wormhole/
 │       └── generateRandomCode.ts
 ├── db/
 │   └── schema.sql
+├── docs/
+│   └── observability.md         # logs, metrics, SLOs, alerts, runbooks
+├── observability/
+│   ├── alerts.yml               # Prometheus alert rules
+│   ├── alertmanager.yml
+│   ├── prometheus.yml
+│   └── grafana/                 # provisioned datasource and dashboard
 ├── test/
 │   ├── integration/
 │   │   ├── db-lifecycle.test.ts
-│   │   └── health-readiness.test.ts
+│   │   ├── health-readiness.test.ts
+│   │   └── observability.test.ts
 │   └── unit/
 │       ├── config.test.ts
+│       ├── databaseMonitor.test.ts
 │       ├── errorHandler.test.ts
 │       ├── health.test.ts
+│       ├── httpObservability.test.ts
+│       ├── logger.test.ts
+│       ├── metrics.test.ts
 │       └── retry.test.ts
 ├── .env.example
 ├── .npmrc
 ├── .nvmrc
 ├── compose.yml                  # PostgreSQL base service
 ├── compose.dev.yml              # development port overlay
+├── compose.observability.yml    # Prometheus, Alertmanager, Grafana
 ├── package.json
 ├── package-lock.json
 ├── tsconfig.json
@@ -694,6 +805,9 @@ Docker is not available to the test process. Start Docker and verify with
   without a published port in shared environments.
 - **Dependencies are pinned** to exact versions in `package.json` and the lockfile;
   `engine-strict=true` prevents installing on an unsupported Node release.
+- **`/metrics` is unauthenticated.** Keep it on a private interface or restrict it
+  at the ingress/load balancer. Logs redact credentials and query data, but log
+  retention and access controls still belong to your logging platform.
 
 ### Deployment checklist
 
@@ -705,8 +819,11 @@ Docker is not available to the test process. Start Docker and verify with
 - [ ] Configure `/healthz` as the liveness probe and `/readyz` as the readiness
       probe.
 - [ ] Set the termination grace period to at least `SHUTDOWN_TIMEOUT_MS`.
-- [ ] Set `GIT_COMMIT` so health responses identify the deployed revision.
-- [ ] Collect stdout/stderr in your logging platform.
+- [ ] Set `GIT_COMMIT` so health responses and `wormhole_build_info` identify the
+      deployed revision.
+- [ ] Collect stdout/stderr in your logging platform; parse it as JSON.
+- [ ] Scrape `/metrics` and load `observability/alerts.yml`; send alerts through
+      Alertmanager to your on-call channel.
 - [ ] Apply schema changes with an explicit migration process; the initdb script
       only runs on a fresh volume.
 - [ ] Back up PostgreSQL, and test restores, independently of this service.
@@ -728,7 +845,10 @@ database writes.
 - Destination URL syntax is not validated. Any non-empty string is stored and
   returned.
 - No migration framework; `db/schema.sql` is initialization-only.
-- No structured logging, metrics, or distributed tracing.
+- Metrics are pull-based Prometheus only; there is no OTLP exporter or distributed
+  tracing.
+- The bundled Alertmanager receiver is intentionally empty and must be wired to a
+  real notification channel before production use.
 - Write operations are not automatically retried after transient database failures,
   because the write may already have committed.
 
