@@ -31,6 +31,53 @@ services:
     secrets:
       - postgres_password
 
+  app:
+    container_name: wormhole-app
+    image: wormhole:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      WORMHOLE_PORT: 3000
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
+      DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-5000}
+      DB_HEALTH_CHECK_INTERVAL_MS: ${DB_HEALTH_CHECK_INTERVAL_MS:-5000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${WORMHOLE_PORT:-3000}:3000"
+    networks:
+      - backend
+      - edge
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    secrets:
+      - postgres_password
+
 volumes:
   postgres_data:
 
@@ -41,3 +88,4 @@ secrets:
 networks:
   backend:
     internal: true
+  edge:

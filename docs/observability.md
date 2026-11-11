@@ -134,7 +134,8 @@ Prometheus's own `up` metric rather than an application metric because when the
 process is gone, `wormhole_database_up` is absent rather than `0` and the
 database alert's `== 0` comparison matches nothing.
 
-1. Check the API process and its logs.
+1. Check the API process and its logs (`docker compose logs app` for the
+   containerized stack, or the `npm run dev` terminal).
 2. Check `/metrics` directly: `curl -s localhost:3000/metrics | head`.
 3. If the process is running but `up` is `0`, the scrape itself is failing —
    check the port, the `/metrics` response, and Prometheus's target errors page.
@@ -143,7 +144,7 @@ database alert's `== 0` comparison matches nothing.
 
 1. Check `wormhole_database_up` and `wormhole_database_health_checks_total` on
    the dashboard.
-2. Check PostgreSQL (`docker compose -f compose.yml -f compose.dev.yml ps`).
+2. Check PostgreSQL (`docker compose ps`).
 3. Search error logs for `requestId`s from the Grafana/Prometheus time window;
    `database unavailable while handling request` entries include the pg error
    code but not credentials.
@@ -174,17 +175,22 @@ clearest symptom: with a healthy database,
 
 ## Dashboards and local stack
 
-Start the observability stack alongside the database and API:
+Start the containerized API and database, then the observability stack:
 
 ```bash
-# Terminal 1: database
-docker compose -f compose.yml -f compose.dev.yml up -d
+# Terminal 1: database and API
+docker compose up -d --build
 
-# Terminal 2: API
-npm run dev
-
-# Terminal 3: Prometheus, Alertmanager, Grafana
+# Terminal 2: Prometheus, Alertmanager, Grafana
 docker compose -f compose.observability.yml up -d
+```
+
+To run the API in watch mode on the host instead, start only the database with the
+development overlay and run `npm run dev`:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml up -d db
+npm run dev
 ```
 
 | Service | URL | Notes |
@@ -195,7 +201,8 @@ docker compose -f compose.observability.yml up -d
 
 The dashboard `Wormhole RED and Database` is provisioned automatically from
 [`observability/grafana/dashboards/wormhole.json`](../observability/grafana/dashboards/wormhole.json).
-Prometheus scrapes `host.docker.internal:3000`; edit
+Prometheus scrapes `host.docker.internal:3000`; the Compose `app` service publishes
+the API there, and `npm run dev` listens on the same port. Edit
 [`observability/prometheus.yml`](../observability/prometheus.yml) if
 `WORMHOLE_PORT` is different. The compose file binds all three UIs to
 `127.0.0.1` and adds the `host-gateway` mapping needed on Linux.
@@ -218,14 +225,14 @@ To reproduce it manually:
 
 ```bash
 # With the API, database, and observability stack running:
-docker compose -f compose.yml -f compose.dev.yml stop db
+docker compose stop db
 
 # Within ~30 seconds:
 curl -s localhost:3000/metrics | grep wormhole_database_up   # 0
 curl -i localhost:3000/readyz                                 # 503
 open http://localhost:9090/alerts                             # firing
 
-docker compose -f compose.yml -f compose.dev.yml start db
+docker compose start db
 # The gauge returns to 1 and the alert resolves automatically.
 ```
 
