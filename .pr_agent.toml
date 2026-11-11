@@ -1,6 +1,5 @@
 [config]
-model = "deepseek/deepseek-v4-pro"
-fallback_models = ["deepseek/deepseek-v4-flash"]
+model = "deepseek/deepseek-flash"
 
 [github_action_config]
 handle_push_trigger = true
