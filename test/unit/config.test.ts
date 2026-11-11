@@ -4,7 +4,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { ConfigError, loadConfig } from "../../src/config.ts";
+import {
+  ConfigError,
+  loadConfig,
+  loadDatabaseConfig,
+  loadLogLevel,
+} from "../../src/config.ts";
 import type { Env } from "../../src/config.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
@@ -51,6 +56,7 @@ test("loads a valid configuration with documented defaults", () => {
   assert.equal(config.shutdownTimeoutMs, 10_000);
   assert.equal(config.dbHealthCheckIntervalMs, 5_000);
   assert.equal(config.logLevel, "info");
+  assert.equal(config.runMigrationsOnStartup, false);
   assert.deepEqual(config.database, {
     host: "localhost",
     port: 5_432,
@@ -71,6 +77,7 @@ test("uses explicit values", () => {
     DB_CONNECT_TIMEOUT_MS: "1500",
     DB_HEALTH_CHECK_INTERVAL_MS: "15000",
     LOG_LEVEL: "DEBUG",
+    RUN_MIGRATIONS_ON_STARTUP: "TRUE",
     HOST: "db.internal",
     POSTGRES_PORT: "6543",
   });
@@ -79,6 +86,7 @@ test("uses explicit values", () => {
   assert.equal(config.shutdownTimeoutMs, 2_500);
   assert.equal(config.dbHealthCheckIntervalMs, 15_000);
   assert.equal(config.logLevel, "debug");
+  assert.equal(config.runMigrationsOnStartup, true);
   assert.deepEqual(config.database, {
     host: "db.internal",
     port: 6_543,
@@ -258,6 +266,66 @@ test("ignores an empty DATABASE_URL value", () => {
   assert.equal(config.database.database, "wormhole");
 });
 
+test("parses RUN_MIGRATIONS_ON_STARTUP strictly", () => {
+  const file = passwordFile("s3cret");
+
+  for (const [raw, expected] of [
+    ["true", true],
+    ["TRUE", true],
+    ["false", false],
+    ["FaLsE", false],
+  ] as const) {
+    const config = loadConfig({
+      ...baseEnv(file),
+      RUN_MIGRATIONS_ON_STARTUP: raw,
+    });
+
+    assert.equal(config.runMigrationsOnStartup, expected, raw);
+  }
+
+  for (const raw of ["yes", "1", "0", "on", "truthy"]) {
+    assert.match(
+      loadAndExpectError({
+        ...baseEnv(file),
+        RUN_MIGRATIONS_ON_STARTUP: raw,
+      }).message,
+      /RUN_MIGRATIONS_ON_STARTUP must be "true" or "false"/,
+      raw,
+    );
+  }
+});
+
+test("loadDatabaseConfig ignores DATABASE_URL while the API still rejects it", () => {
+  const file = passwordFile("s3cret");
+  const env = {
+    ...baseEnv(file),
+    DATABASE_URL: "postgres://postgres:s3cret@localhost:5432/wormhole",
+  };
+
+  assert.match(
+    loadAndExpectError(env).message,
+    /DATABASE_URL is not supported/,
+  );
+
+  assert.deepEqual(loadDatabaseConfig(env), {
+    host: "localhost",
+    port: 5_432,
+    user: "postgres",
+    password: "s3cret",
+    database: "wormhole",
+    connectTimeoutMs: 5_000,
+  });
+});
+
+test("loadLogLevel parses LOG_LEVEL and rejects invalid values", () => {
+  assert.equal(loadLogLevel({}), "info");
+  assert.equal(loadLogLevel({ LOG_LEVEL: "WARN" }), "warn");
+  assert.throws(
+    () => loadLogLevel({ LOG_LEVEL: "verbose" }),
+    /LOG_LEVEL must be one of debug, info, warn, error/,
+  );
+});
+
 test("the entrypoint exits with a clear error before connecting", () => {
   const env: NodeJS.ProcessEnv = { ...process.env };
 
@@ -274,6 +342,7 @@ test("the entrypoint exits with a clear error before connecting", () => {
     "DB_CONNECT_TIMEOUT_MS",
     "DB_HEALTH_CHECK_INTERVAL_MS",
     "LOG_LEVEL",
+    "RUN_MIGRATIONS_ON_STARTUP",
   ]) {
     delete env[name];
   }

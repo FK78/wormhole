@@ -18,6 +18,7 @@ export type Config = {
     shutdownTimeoutMs: number;
     dbHealthCheckIntervalMs: number;
     logLevel: LogLevel;
+    runMigrationsOnStartup: boolean;
     database: DatabaseConfig;
 };
 
@@ -93,6 +94,36 @@ const parseLogLevel = (env: Env, issues: string[]): LogLevel => {
         `LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")} (received "${raw}")`,
     );
     return DEFAULT_LOG_LEVEL;
+};
+
+export const loadLogLevel = (env: Env = process.env): LogLevel => {
+    const issues: string[] = [];
+    const level = parseLogLevel(env, issues);
+
+    if (issues.length > 0) {
+        throw new ConfigError(issues);
+    }
+
+    return level;
+};
+
+const parseBoolean = (
+    env: Env,
+    name: string,
+    issues: string[],
+    fallback: boolean,
+): boolean => {
+    const raw = env[name];
+
+    if (!isSet(raw)) return fallback;
+
+    const value = raw.trim().toLowerCase();
+
+    if (value === "true") return true;
+    if (value === "false") return false;
+
+    issues.push(`${name} must be "true" or "false" (received "${raw}")`);
+    return fallback;
 };
 
 const parseInteger = (
@@ -172,6 +203,57 @@ const readPassword = (env: Env, issues: string[]): string | undefined => {
     return value;
 };
 
+const parseDatabaseConfig = (
+    env: Env,
+    issues: string[],
+): DatabaseConfig | undefined => {
+    const issueCount = issues.length;
+
+    const postgresPort = parseInteger(env, "POSTGRES_PORT", issues, {
+        fallback: DEFAULT_POSTGRES_PORT,
+        min: 1,
+        max: 65_535,
+    });
+    const connectTimeoutMs = parseInteger(env, "DB_CONNECT_TIMEOUT_MS", issues, {
+        fallback: DEFAULT_DB_CONNECT_TIMEOUT_MS,
+        min: 1,
+        max: MAX_TIMER_MS,
+    });
+    const user = requiredString(env, "POSTGRES_USER", issues);
+    const database = requiredString(env, "POSTGRES_DB", issues);
+    const password = readPassword(env, issues);
+    const host = optionalString(env, "HOST", DEFAULT_HOST);
+
+    if (issues.length > issueCount) {
+        return undefined;
+    }
+
+    return {
+        host,
+        port: postgresPort!,
+        user: user!,
+        password: password!,
+        database: database!,
+        connectTimeoutMs: connectTimeoutMs!,
+    };
+};
+
+/**
+ * Loads only the database connection settings. Unlike {@link loadConfig}, this
+ * intentionally ignores DATABASE_URL: migration tooling must keep working when
+ * a platform injects that variable, while the API continues to reject it.
+ */
+export const loadDatabaseConfig = (env: Env = process.env): DatabaseConfig => {
+    const issues: string[] = [];
+    const config = parseDatabaseConfig(env, issues);
+
+    if (issues.length > 0 || config === undefined) {
+        throw new ConfigError(issues);
+    }
+
+    return config;
+};
+
 export const loadConfig = (env: Env = process.env): Config => {
     const issues: string[] = [];
 
@@ -186,18 +268,8 @@ export const loadConfig = (env: Env = process.env): Config => {
         min: 1,
         max: 65_535,
     });
-    const postgresPort = parseInteger(env, "POSTGRES_PORT", issues, {
-        fallback: DEFAULT_POSTGRES_PORT,
-        min: 1,
-        max: 65_535,
-    });
     const shutdownTimeoutMs = parseInteger(env, "SHUTDOWN_TIMEOUT_MS", issues, {
         fallback: DEFAULT_SHUTDOWN_TIMEOUT_MS,
-        min: 1,
-        max: MAX_TIMER_MS,
-    });
-    const connectTimeoutMs = parseInteger(env, "DB_CONNECT_TIMEOUT_MS", issues, {
-        fallback: DEFAULT_DB_CONNECT_TIMEOUT_MS,
         min: 1,
         max: MAX_TIMER_MS,
     });
@@ -212,11 +284,13 @@ export const loadConfig = (env: Env = process.env): Config => {
         },
     );
     const logLevel = parseLogLevel(env, issues);
-
-    const user = requiredString(env, "POSTGRES_USER", issues);
-    const database = requiredString(env, "POSTGRES_DB", issues);
-    const password = readPassword(env, issues);
-    const host = optionalString(env, "HOST", DEFAULT_HOST);
+    const runMigrationsOnStartup = parseBoolean(
+        env,
+        "RUN_MIGRATIONS_ON_STARTUP",
+        issues,
+        false,
+    );
+    const database = parseDatabaseConfig(env, issues);
 
     if (issues.length > 0) {
         throw new ConfigError(issues);
@@ -227,13 +301,7 @@ export const loadConfig = (env: Env = process.env): Config => {
         shutdownTimeoutMs: shutdownTimeoutMs!,
         dbHealthCheckIntervalMs: dbHealthCheckIntervalMs!,
         logLevel,
-        database: {
-            host,
-            port: postgresPort!,
-            user: user!,
-            password: password!,
-            database: database!,
-            connectTimeoutMs: connectTimeoutMs!,
-        },
+        runMigrationsOnStartup,
+        database: database!,
     };
 };

@@ -40,6 +40,21 @@ const main = async (): Promise<void> => {
     return;
   }
 
+  if (config.runMigrationsOnStartup) {
+    try {
+      // Keep node-pg-migrate and its dependency tree out of the default API
+      // startup path; deployments normally run migrations as a separate step.
+      const { runUp } = await import("./db/migrations.ts");
+      await runUp(config.database);
+      logger.info("database migrations complete");
+    } catch (err) {
+      logger.error("database migrations failed at startup", { error: err });
+      await pool.end().catch(() => {});
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const databaseMonitor = startDatabaseMonitor({
     intervalMs: config.dbHealthCheckIntervalMs,
   });

@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { Client } from "pg";
+import { migrationEnv, spawnMigration } from "../helpers/migrations.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
-const SCHEMA_PATH = path.join(REPO_ROOT, "db/schema.sql");
 const POSTGRES_IMAGE = "postgres:18.6";
 const DB_NAME = "wormhole";
 const DB_USER = "postgres";
@@ -202,6 +202,7 @@ const startApp = async (
   };
   delete env.POSTGRES_PASSWORD;
   delete env.DATABASE_URL;
+  delete env.RUN_MIGRATIONS_ON_STARTUP;
 
   const child = spawn(process.execPath, [path.join(REPO_ROOT, "src/index.ts")], {
     cwd: REPO_ROOT,
@@ -307,8 +308,6 @@ describe(
           `POSTGRES_DB=${DB_NAME}`,
           "-p",
           `127.0.0.1:${dbPort}:5432`,
-          "-v",
-          `${SCHEMA_PATH}:/docker-entrypoint-initdb.d/schema.sql:ro`,
           POSTGRES_IMAGE,
         ]);
 
@@ -324,6 +323,21 @@ describe(
         );
 
         await waitForPostgres(containerName);
+
+        const migration = spawnMigration(
+          ["up"],
+          migrationEnv({
+            dbPort,
+            passwordFile: PASSWORD_FILE,
+            database: DB_NAME,
+            user: DB_USER,
+          }),
+        );
+        assert.equal(
+          migration.status,
+          0,
+          `Migration failed.\n${migration.stdout}\n${migration.stderr}`,
+        );
       },
       { timeout: 120_000 },
     );
