@@ -604,7 +604,7 @@ unauthenticated; restrict it at the network or ingress layer in production.
 
 ### SLOs and alerts
 
-Targets over a rolling 30-day window: 99.9% availability, error rate below 1%,
+Targets over a rolling 30-day window: 99.9% availability (0.1% error ratio),
 p95 latency at or below 300 ms, and p99 latency at or below 1 s. Alert rules in
 [`observability/alerts.yml`](observability/alerts.yml) cover database
 unavailability, high error rate, p95/p99 latency, and pool saturation/waiters.

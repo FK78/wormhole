@@ -83,8 +83,10 @@ when no requests are arriving. Pool gauges are sampled at scrape time. Health
 probes and `/metrics` scrapes are excluded from the request metrics, so RED
 signals reflect API traffic rather than monitoring traffic.
 
-The latency histogram buckets are 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms,
-1s, 2.5s, 5s, and 10s, plus `+Inf`.
+The latency histogram buckets are 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 300ms,
+500ms, 1s, 2.5s, 5s, and 10s, plus `+Inf`. The 300ms and 1s boundaries line up
+with the p95 and p99 SLOs, so the alerting quantiles are not smeared across a
+wide bucket.
 
 ## SLOs
 
@@ -93,16 +95,17 @@ Targets over a rolling 30-day window:
 | SLI | Target | PromQL |
 | --- | ------ | ------ |
 | Availability (non-5xx) | 99.9% | `sum(rate(wormhole_http_requests_total{status!~"5.."}[30d])) / sum(rate(wormhole_http_requests_total[30d]))` |
-| Error rate | < 1% | `sum(rate(wormhole_http_requests_total{status=~"5.."}[30d])) / sum(rate(wormhole_http_requests_total[30d]))` |
+| Error ratio (5xx) | <= 0.1% | `sum(rate(wormhole_http_requests_total{status=~"5.."}[30d])) / sum(rate(wormhole_http_requests_total[30d]))` |
 | p95 latency | <= 300ms | `histogram_quantile(0.95, sum by (le) (rate(wormhole_http_request_duration_seconds_bucket[30d])))` |
 | p99 latency | <= 1s | `histogram_quantile(0.99, sum by (le) (rate(wormhole_http_request_duration_seconds_bucket[30d])))` |
 
 A 99.9% availability target allows about 43 minutes of failed requests every
-30 days. The p95/p99 targets are measured over successful and failed requests
-alike, because a failure that returns quickly can otherwise hide a slow tail.
-Fast-burn alerts use 5-10 minute windows, while a 30-minute warning tracks
-1% error-rate burn so the team hears about SLO pressure before the monthly
-target is exhausted.
+30 days; that is the same as a 0.1% error-ratio budget. The p95/p99 targets are
+measured over successful and failed requests alike, because a failure that
+returns quickly can otherwise hide a slow tail. Fast-burn alerts use 5-10
+minute windows, while a 30-minute warning tracks a 0.5% error rate (five times
+the budget) so the team hears about SLO pressure before the monthly target is
+exhausted.
 
 The bundled Prometheus keeps seven days of data, so the 30-day queries above
 need a long-term metrics backend (or a longer retention setting) to be
@@ -117,7 +120,7 @@ are evaluated by Prometheus and routed through Alertmanager.
 | ----- | --------- | --- | -------- |
 | `WormholeDatabaseUnavailable` | `wormhole_database_up == 0` | 30s | critical |
 | `WormholeHighErrorRate` | 5xx ratio > 5% | 5m | critical |
-| `WormholeElevatedErrorRate` | 5xx ratio > 1% (SLO) | 30m | warning |
+| `WormholeElevatedErrorRate` | 5xx ratio > 0.5% (5x budget) | 30m | warning |
 | `WormholeHighP95Latency` | p95 > 300ms | 10m | warning |
 | `WormholeHighP99Latency` | p99 > 1s | 10m | critical |
 | `WormholeDatabasePoolSaturated` | in-use pool connections > 90% of max | 10m | warning |

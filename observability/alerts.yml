@@ -34,14 +34,14 @@ groups:
             sum(rate(wormhole_http_requests_total{status=~"5.."}[30m]))
             /
             sum(rate(wormhole_http_requests_total[30m]))
-          ) > 0.01
+          ) > 0.005
         for: 30m
         labels:
           severity: warning
           service: wormhole
         annotations:
-          summary: "Wormhole is burning its 1% error-rate SLO"
-          description: "More than 1% of HTTP requests have returned 5xx over the last 30 minutes, which is above the error-rate SLO."
+          summary: "Wormhole error rate is five times its SLO budget"
+          description: "More than 0.5% of HTTP requests have returned 5xx over the last 30 minutes, which is five times the 0.1% error-ratio budget behind the 99.9% availability SLO."
           runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#high-error-rate"
 
       - alert: WormholeHighP95Latency
