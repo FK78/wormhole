@@ -45,5 +45,6 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-  }
+  },
+  "include": ["src"]
 }
