@@ -118,6 +118,7 @@ are evaluated by Prometheus and routed through Alertmanager.
 
 | Alert | Condition | For | Severity |
 | ----- | --------- | --- | -------- |
+| `WormholeTargetDown` | `up{job="wormhole"} == 0` | 30s | critical |
 | `WormholeDatabaseUnavailable` | `wormhole_database_up == 0` | 30s | critical |
 | `WormholeHighErrorRate` | 5xx ratio > 5% | 5m | critical |
 | `WormholeElevatedErrorRate` | 5xx ratio > 0.5% (5x budget) | 30m | warning |
@@ -125,6 +126,18 @@ are evaluated by Prometheus and routed through Alertmanager.
 | `WormholeHighP99Latency` | p99 > 1s | 10m | critical |
 | `WormholeDatabasePoolSaturated` | in-use pool connections > 90% of max | 10m | warning |
 | `WormholeDatabasePoolWaiters` | any client waited for a connection | 5m | warning |
+
+### Target down
+
+`WormholeTargetDown` fires when Prometheus cannot scrape the API. It uses
+Prometheus's own `up` metric rather than an application metric because when the
+process is gone, `wormhole_database_up` is absent rather than `0` and the
+database alert's `== 0` comparison matches nothing.
+
+1. Check the API process and its logs.
+2. Check `/metrics` directly: `curl -s localhost:3000/metrics | head`.
+3. If the process is running but `up` is `0`, the scrape itself is failing —
+   check the port, the `/metrics` response, and Prometheus's target errors page.
 
 ### Database unavailable
 

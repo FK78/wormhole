@@ -1,6 +1,17 @@
 groups:
   - name: wormhole
     rules:
+      - alert: WormholeTargetDown
+        expr: up{job="wormhole"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: wormhole
+        annotations:
+          summary: "Wormhole API is down or cannot be scraped"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 30 seconds. The process may be stopped, unreachable, or failing to serve /metrics. Request-based alerts cannot fire while this is true."
+          runbook_url: "https://github.com/FK78/wormhole/blob/main/docs/observability.md#target-down"
+
       - alert: WormholeDatabaseUnavailable
         expr: wormhole_database_up == 0
         for: 30s

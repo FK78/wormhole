@@ -120,6 +120,7 @@ test("redacts sensitive object keys at every nesting level", () => {
 
   logger.error("request failed", {
     password: "hunter2",
+    pwd: "hunter3",
     headers: {
       authorization: "Bearer super-secret-token",
       cookie: "session=abc",
@@ -133,6 +134,7 @@ test("redacts sensitive object keys at every nesting level", () => {
   const database = entry.database as Record<string, unknown>;
 
   assert.equal(entry.password, "[REDACTED]");
+  assert.equal(entry.pwd, "[REDACTED]");
   assert.equal(headers.authorization, "[REDACTED]");
   assert.equal(headers.cookie, "[REDACTED]");
   assert.equal(headers.accept, "application/json");

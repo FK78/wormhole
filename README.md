@@ -606,10 +606,13 @@ unauthenticated; restrict it at the network or ingress layer in production.
 
 Targets over a rolling 30-day window: 99.9% availability (0.1% error ratio),
 p95 latency at or below 300 ms, and p99 latency at or below 1 s. Alert rules in
-[`observability/alerts.yml`](observability/alerts.yml) cover database
-unavailability, high error rate, p95/p99 latency, and pool saturation/waiters.
-`WormholeDatabaseUnavailable` fires 30 seconds after `wormhole_database_up` drops
-to `0`.
+[`observability/alerts.yml`](observability/alerts.yml) cover target down,
+database unavailability, high error rate, p95/p99 latency, and pool
+saturation/waiters. `WormholeTargetDown` fires when Prometheus cannot scrape the
+API, which also covers process death. `WormholeDatabaseUnavailable` fires 30
+seconds after `wormhole_database_up` drops to `0`; when the process is gone that
+metric is absent rather than zero, so the target alert is the one that catches
+it.
 
 ### Local Prometheus, Alertmanager, and Grafana
 

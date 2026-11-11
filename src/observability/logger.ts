@@ -43,7 +43,7 @@ const MAX_CONTEXT_DEPTH = 6;
 // Keys whose values must never be written to a log line. Matching is
 // case-insensitive and applies at every nesting level.
 const SENSITIVE_KEY =
-  /pass(?:word|wd)?|secret|token|api[-_]?key|authorization|cookie|credential|session|private[-_]?key|client[-_]?secret/i;
+  /pass(?:word|wd)?|pwd|secret|token|api[-_]?key|authorization|cookie|credential|session|private[-_]?key|client[-_]?secret/i;
 
 // Textual secrets that can appear inside otherwise safe string fields, such
 // as an Error message produced by pg or the HTTP stack.
