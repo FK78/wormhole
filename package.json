@@ -17,7 +17,10 @@
   "scripts": {
     "dev": "node --env-file .env --watch src/index.ts",
     "build": "tsc",
-    "start": "node --env-file .env dist/index.js"
+    "start": "node --env-file .env dist/index.js",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:unit": "node --test \"test/unit/**/*.test.ts\"",
+    "test:integration": "node --test --test-concurrency=1 \"test/integration/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/express": "5.0.6",

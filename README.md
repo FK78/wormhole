@@ -97,6 +97,24 @@ curl http://localhost:3000/shorten/abc123/stats
 | `400` | That's not a valid URL. Try again.  |
 | `404` | Shortcode doesn't exist. Never did. |
 | `500` | Something broke on our end.         |
+| `503` | Database is temporarily unavailable. Retry shortly. |
+
+## Database Resilience
+
+- Idle pool clients can be terminated by PostgreSQL restarts. Those errors are logged, the broken client is removed, and `pg.Pool` opens a new connection on the next request.
+- Startup waits for the database with bounded exponential backoff (10 attempts, 250ms–5s delays).
+- Transient database failures return `503` with a `Retry-After` header. Writes are not automatically retried, because a connection can fail after a write has already committed.
+- `SIGTERM` and `SIGINT` stop accepting new connections, drain in-flight requests for up to `SHUTDOWN_TIMEOUT_MS`, close the pool, then exit. If the deadline is reached, remaining connections are force-closed and the process exits with code `1`.
+
+## Testing
+
+```bash
+npm test               # unit + integration tests
+npm run test:unit      # fast tests, no database required
+npm run test:integration
+```
+
+The integration test starts its own `postgres:18.6` container with a fixed, dynamic host port, restarts PostgreSQL while the API is serving, checks that the process survives and recovers, and verifies graceful shutdown with an in-flight request. It skips cleanly when Docker is unavailable.
 
 ## Getting Started
 
@@ -116,6 +134,8 @@ cp .env.example .env
 
 ```bash
 WORMHOLE_PORT=3000
+SHUTDOWN_TIMEOUT_MS=10000
+DB_CONNECT_TIMEOUT_MS=5000
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=wormhole
@@ -123,14 +143,16 @@ POSTGRES_PORT=5432
 HOST=localhost
 ```
 
-| Variable            | Description                        |
-| ------------------- | ---------------------------------- |
-| `WORMHOLE_PORT`     | Port the Express server listens on |
-| `POSTGRES_USER`     | PostgreSQL username                |
-| `POSTGRES_PASSWORD` | PostgreSQL password                |
-| `POSTGRES_DB`       | PostgreSQL database name           |
-| `POSTGRES_PORT`     | PostgreSQL port                    |
-| `HOST`              | Database host                      |
+| Variable                | Description                                    |
+| ----------------------- | ---------------------------------------------- |
+| `WORMHOLE_PORT`         | Port the Express server listens on             |
+| `SHUTDOWN_TIMEOUT_MS`   | Max time to drain requests before forcing exit |
+| `DB_CONNECT_TIMEOUT_MS` | Max time to wait for a database connection     |
+| `POSTGRES_USER`         | PostgreSQL username                            |
+| `POSTGRES_PASSWORD`     | PostgreSQL password                            |
+| `POSTGRES_DB`           | PostgreSQL database name                       |
+| `POSTGRES_PORT`         | PostgreSQL port                                |
+| `HOST`                  | Database host                                  |
 
 Start the database:
 
@@ -174,17 +196,25 @@ wormhole/
 │   ├── utils/
 │   │   └── generateRandomCode.ts
 │   └── db/
-│       └── db.ts
+│       ├── db.ts
+│       └── retry.ts
 ├── db/
 │   └── schema.sql
+├── test/
+│   ├── integration/
+│   │   └── db-lifecycle.test.ts
+│   └── unit/
+│       ├── errorHandler.test.ts
+│       └── retry.test.ts
 ├── .env.example
 ├── compose.yml
+├── compose.dev.yml
 └── tsconfig.json
 ```
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22.18+ (native TypeScript type stripping)
 - Docker (for PostgreSQL)
 - Long URLs that need shortening (shouldn't be hard to find)
 
