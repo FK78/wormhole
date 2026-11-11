@@ -25,6 +25,12 @@ COPY --from=build --chown=node:node /app/dist ./dist
 
 COPY --chown=node:node package.json ./
 
+# The pinned trixie base predates the zlib security update. Pull the fixed
+# package from trixie-security so the image passes the fixable-CVE gate.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx
 
 USER node
