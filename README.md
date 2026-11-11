@@ -58,7 +58,7 @@ curl -X DELETE http://localhost:3000/shorten/abc123
 curl http://localhost:3000/shorten/abc123/stats
 ```
 
-> Swap `localhost:3000` for whatever `PORT` you set in `.env`.
+> Swap `localhost:3000` for whatever `WORMHOLE_PORT` you set in `.env`.
 
 ## Response Examples
 
@@ -128,7 +128,12 @@ Set up your environment:
 
 ```bash
 cp .env.example .env
+mkdir -p secrets
+printf '%s' 'change-me' > secrets/postgres_password.txt
+chmod 600 secrets/postgres_password.txt
 ```
+
+The database password lives in `secrets/postgres_password.txt`. The app reads it through `POSTGRES_PASSWORD_FILE`, and `compose.yml` mounts the same file into the PostgreSQL container - so there is exactly one place to change it. The file is gitignored, so every checkout needs its own. Relative paths are resolved from the directory you start the app in (the repository root in the commands below).
 
 `.env.example` looks like this - adjust values to match your setup:
 
@@ -137,36 +142,36 @@ WORMHOLE_PORT=3000
 SHUTDOWN_TIMEOUT_MS=10000
 DB_CONNECT_TIMEOUT_MS=5000
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
+POSTGRES_PASSWORD_FILE=./secrets/postgres_password.txt
 POSTGRES_DB=wormhole
 POSTGRES_PORT=5432
 HOST=localhost
 ```
 
-| Variable                | Description                                    |
-| ----------------------- | ---------------------------------------------- |
-| `WORMHOLE_PORT`         | Port the Express server listens on             |
-| `SHUTDOWN_TIMEOUT_MS`   | Max time to drain requests before forcing exit |
-| `DB_CONNECT_TIMEOUT_MS` | Max time to wait for a database connection     |
-| `POSTGRES_USER`         | PostgreSQL username                            |
-| `POSTGRES_PASSWORD`     | PostgreSQL password                            |
-| `POSTGRES_DB`           | PostgreSQL database name                       |
-| `POSTGRES_PORT`         | PostgreSQL port                                |
-| `HOST`                  | Database host                                  |
+| Variable                 | Required | Default     | Description                                    |
+| ------------------------ | -------- | ----------- | ---------------------------------------------- |
+| `WORMHOLE_PORT`          | no       | `3000`      | Port the Express server listens on             |
+| `SHUTDOWN_TIMEOUT_MS`    | no       | `10000`     | Max time to drain requests before forcing exit |
+| `DB_CONNECT_TIMEOUT_MS`  | no       | `5000`      | Max time to wait for a database connection     |
+| `POSTGRES_USER`          | yes      | -           | PostgreSQL username                            |
+| `POSTGRES_PASSWORD_FILE` | yes      | -           | File containing the PostgreSQL password        |
+| `POSTGRES_DB`            | yes      | -           | PostgreSQL database name                       |
+| `POSTGRES_PORT`          | no       | `5432`      | PostgreSQL port                                |
+| `HOST`                   | no       | `localhost` | Database host                                  |
+
+Configuration is validated at startup. Missing or empty required values, malformed ports and timeouts, an unreadable or empty password file, and the unsupported `DATABASE_URL`/`POSTGRES_PASSWORD` variables all stop the process with exit code `1` and list every problem. Optional variables left empty fall back to their defaults.
 
 Start the database:
 
 ```bash
-docker compose up -d
+docker compose -f compose.yml -f compose.dev.yml up -d
 ```
 
-Create the tables:
+`db/schema.sql` is mounted into `/docker-entrypoint-initdb.d/`, so Postgres applies it automatically the first time the volume is created. If the volume already exists, reset it before starting again:
 
 ```bash
-psql "$DATABASE_URL" -f db/schema.sql
+docker compose -f compose.yml -f compose.dev.yml down -v
 ```
-
-> **Tip:** you can skip this manual step by mounting `db/schema.sql` into `/docker-entrypoint-initdb.d/` in `compose.yml` - Postgres runs any `.sql` files there automatically on first boot. Just note it only fires on a fresh volume, so if you've already started the container once, run `docker compose down -v` first to reset it.
 
 Start the server:
 
@@ -180,6 +185,7 @@ npm run dev
 wormhole/
 ├── src/
 │   ├── index.ts
+│   ├── config.ts
 │   ├── routes/
 │   │   └── url.router.ts
 │   ├── controllers/
@@ -204,9 +210,11 @@ wormhole/
 │   ├── integration/
 │   │   └── db-lifecycle.test.ts
 │   └── unit/
+│       ├── config.test.ts
 │       ├── errorHandler.test.ts
 │       └── retry.test.ts
 ├── .env.example
+├── .nvmrc
 ├── compose.yml
 ├── compose.dev.yml
 └── tsconfig.json
@@ -214,7 +222,7 @@ wormhole/
 
 ## Requirements
 
-- Node.js 22.18+ (native TypeScript type stripping)
+- Node.js 26 LTS (see `.nvmrc`); the minimum supported release is 26.13.0, which the app needs for native TypeScript type stripping and `--env-file`
 - Docker (for PostgreSQL)
 - Long URLs that need shortening (shouldn't be hard to find)
 
