@@ -6,7 +6,10 @@ import { after, before, test } from "node:test";
 import express from "express";
 import { pool } from "../../src/db/db.ts";
 import healthRoutes from "../../src/routes/health.router.ts";
-import { isDatabaseReady } from "../../src/services/health.service.ts";
+import {
+  isDatabaseReady,
+  READINESS_TIMEOUT_MS,
+} from "../../src/services/health.service.ts";
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
@@ -87,7 +90,10 @@ test("GET /readyz returns 200 when the database responds", async (t) => {
   assert.equal(response.body.status, "ready");
   assert.deepEqual(response.body.checks, { database: "ok" });
   assert.equal(query.mock.callCount(), 1);
-  assert.equal(query.mock.calls[0]?.arguments[0], "SELECT 1");
+  assert.deepEqual(query.mock.calls[0]?.arguments[0], {
+    text: "SELECT 1",
+    query_timeout: READINESS_TIMEOUT_MS,
+  });
 });
 
 test("GET /readyz returns 503 when the database is down without leaking details", async (t) => {
@@ -154,7 +160,7 @@ test("GET /healthz stays live while the database is down", async (t) => {
 });
 
 test("isDatabaseReady enforces a short timeout", async (t) => {
-  t.mock.method(pool, "query", () => new Promise(() => {}));
+  const query = t.mock.method(pool, "query", () => new Promise(() => {}));
 
   const startedAt = Date.now();
   const ready = await isDatabaseReady(50);
@@ -163,4 +169,11 @@ test("isDatabaseReady enforces a short timeout", async (t) => {
   assert.equal(ready, false);
   assert.ok(elapsedMs >= 40, `timed out too early: ${elapsedMs}ms`);
   assert.ok(elapsedMs < 1_000, `timeout took too long: ${elapsedMs}ms`);
+
+  // pg must also time the query out so the checked-out client is released
+  // instead of being leaked by the abandoned Promise.race below.
+  assert.deepEqual(query.mock.calls[0]?.arguments[0], {
+    text: "SELECT 1",
+    query_timeout: 50,
+  });
 });
