@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 
@@ -11,6 +13,19 @@ const POSTGRES_IMAGE = "postgres:18.6";
 const DB_NAME = "wormhole";
 const DB_USER = "wormhole";
 const DB_PASSWORD = "wormhole-test-secret";
+
+// The app and PostgreSQL must read the password from the same file. The
+// integration database is started with POSTGRES_PASSWORD, so write that same
+// value to the file the app reads.
+const PASSWORD_DIR = mkdtempSync(
+  path.join(tmpdir(), "wormhole-health-integration-"),
+);
+const PASSWORD_FILE = path.join(PASSWORD_DIR, "postgres_password.txt");
+writeFileSync(PASSWORD_FILE, DB_PASSWORD);
+
+after(() => {
+  rmSync(PASSWORD_DIR, { recursive: true, force: true });
+});
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -131,18 +146,22 @@ type AppProcess = {
 };
 
 const startApp = async (port: number, dbPort: number): Promise<AppProcess> => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: "test",
+    HOST: "127.0.0.1",
+    POSTGRES_USER: DB_USER,
+    POSTGRES_PASSWORD_FILE: PASSWORD_FILE,
+    POSTGRES_DB: DB_NAME,
+    POSTGRES_PORT: String(dbPort),
+    WORMHOLE_PORT: String(port),
+  };
+  delete env.POSTGRES_PASSWORD;
+  delete env.DATABASE_URL;
+
   const child = spawn(process.execPath, [path.join(REPO_ROOT, "src/index.ts")], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      NODE_ENV: "test",
-      HOST: "127.0.0.1",
-      POSTGRES_USER: DB_USER,
-      POSTGRES_PASSWORD: DB_PASSWORD,
-      POSTGRES_DB: DB_NAME,
-      POSTGRES_PORT: String(dbPort),
-      WORMHOLE_PORT: String(port),
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 

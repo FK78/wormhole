@@ -13,6 +13,9 @@
   "license": "MIT",
   "author": "FK78",
   "type": "module",
+  "engines": {
+    "node": ">=26.13.0"
+  },
   "main": "index.js",
   "scripts": {
     "dev": "node --env-file .env --watch src/index.ts",

@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import express from "express";
-import { pool } from "../../src/db/db.ts";
+import { createPool } from "../../src/db/db.ts";
 import healthRoutes from "../../src/routes/health.router.ts";
 import {
   isDatabaseReady,
@@ -14,6 +14,16 @@ import {
 const packageJson = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
 ) as { version: string };
+
+// No connection is opened until a query runs; every query below is mocked.
+const pool = createPool({
+  host: "127.0.0.1",
+  port: 5_432,
+  user: "wormhole",
+  password: "wormhole",
+  database: "wormhole",
+  connectTimeoutMs: 1_000,
+});
 
 type Body = {
   status: string;
@@ -62,6 +72,7 @@ before(async () => {
 after(async () => {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await pool.end();
 });
 
 test("GET /healthz reports liveness without touching the database", async (t) => {

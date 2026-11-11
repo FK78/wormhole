@@ -36,7 +36,7 @@ volumes:
 
 secrets:
   postgres_password:
-    file: ./secrets/postgres_password.txt
+    file: ${POSTGRES_PASSWORD_FILE:-./secrets/postgres_password.txt}
 
 networks:
   backend:

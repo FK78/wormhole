@@ -1,5 +1,5 @@
 import type { QueryConfig } from "pg";
-import { pool } from "../db/db.ts";
+import { getPool } from "../db/db.ts";
 
 // @types/pg does not declare the per-query `query_timeout` option, but
 // node-postgres honours it (pg/lib/client.js reads config.query_timeout).
@@ -22,8 +22,10 @@ export const isDatabaseReady = async (
   };
 
   try {
+    const db = getPool();
+
     await Promise.race([
-      pool.query(readinessQuery),
+      db.query(readinessQuery),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error("Database readiness check timed out")),
